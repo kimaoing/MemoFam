@@ -177,6 +177,12 @@ function validActiveCharacterIds(ids, characters) {
   return [...new Set(ids.filter((ocid) => typeof ocid === 'string' && availableIds.has(ocid)))];
 }
 
+function maxPartySizeForBoss(boss) {
+  return bossRecommendationSettings.maxPartySizeByBoss?.[boss.bossId.toLowerCase()]
+    || bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
+    || bossRecommendationSettings.defaultMaxPartySize;
+}
+
 function recommendationsForCharacter(character, multipliers) {
   const multiplierByBoss = new Map();
   for (const entry of multipliers) {
@@ -189,8 +195,7 @@ function recommendationsForCharacter(character, multipliers) {
   for (const boss of bossRecommendationSettings.bosses) {
     const multiplier = multiplierByBoss.get(boss.bossId.toLowerCase());
     if (!Number.isFinite(multiplier)) continue;
-    const maxPartySize = bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
-      || bossRecommendationSettings.defaultMaxPartySize;
+    const maxPartySize = maxPartySizeForBoss(boss);
     const party = bossRecommendationSettings.partyMultiplierThresholds
       .filter(({ partySize, minimumMultiplier }) => (
         partySize <= maxPartySize && multiplier >= minimumMultiplier
@@ -233,8 +238,7 @@ function bossDetails(bossId) {
   const boss = bossRecommendationSettings.bosses.find((entry) => entry.bossId.toLowerCase() === bossId.toLowerCase());
   return boss ? {
     ...boss,
-    maxPartySize: bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
-      || bossRecommendationSettings.defaultMaxPartySize,
+    maxPartySize: maxPartySizeForBoss(boss),
   } : { bossId, name: bossId, difficultyLabel: '', maxPartySize: 1, cycle: 'weekly' };
 }
 

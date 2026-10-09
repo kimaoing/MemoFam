@@ -192,12 +192,12 @@ button:disabled { cursor: wait; opacity: .65; }
 .schedule-preference-option input { width: 14px; height: 14px; margin: 0; accent-color: #596fd1; }
 .schedule-boss-picker { position: relative; min-width: 0; }
 .schedule-boss-picker summary { min-height: 29px; padding: 6px 10px; border: 1px solid #e1e4eb; border-radius: 5px; color: #596071; font-size: 10px; cursor: pointer; list-style-position: inside; }
-.schedule-boss-options { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; display: grid; width: min(590px, calc(100vw - 48px)); max-height: 320px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; overflow-y: auto; padding: 10px; border: 1px solid #d9dce5; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(20, 24, 35, .16); }
-.schedule-boss-family { display: grid; min-width: 0; gap: 7px; align-content: start; padding: 8px; border: 1px solid #e6e8ef; border-radius: 7px; background: #fafbfe; }
-.schedule-boss-family header { display: flex; min-width: 0; align-items: center; gap: 7px; }
-.schedule-boss-family header img, .schedule-boss-family header .boss-placeholder { width: 30px; height: 30px; flex: 0 0 30px; object-fit: contain; }
-.schedule-boss-family header strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.schedule-boss-difficulties { display: flex; flex-wrap: wrap; gap: 5px; }
+.schedule-boss-options { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; display: grid; width: min(760px, calc(100vw - 48px)); max-height: 360px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 5px; overflow-y: auto; padding: 8px; border: 1px solid #d9dce5; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(20, 24, 35, .16); }
+.schedule-boss-family { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px; border: 1px solid #e6e8ef; border-radius: 7px; background: #fafbfe; }
+.schedule-boss-family header { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 6px; }
+.schedule-boss-family header img, .schedule-boss-family header .boss-placeholder { width: 28px; height: 28px; flex: 0 0 28px; object-fit: contain; }
+.schedule-boss-family header strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-boss-difficulties { display: flex; flex: 0 0 auto; gap: 3px; }
 .schedule-boss-difficulty { display: inline-flex; min-width: 30px; min-height: 30px; align-items: center; justify-content: center; padding: 0 7px; border: 1px solid transparent; border-radius: 6px; color: #485064; font-size: 10px; font-weight: 800; cursor: pointer; }
 .schedule-boss-difficulty.difficulty-easy { background: #e4f3e9; color: #42805a; }
 .schedule-boss-difficulty.difficulty-normal { background: #e5edff; color: #4766b3; }
@@ -209,7 +209,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .schedule-boss-difficulty:has(input:disabled) { opacity: .45; cursor: not-allowed; }
 .schedule-boss-difficulty:focus-within { outline: 2px solid #6579d6; outline-offset: 2px; }
 .schedule-task-options { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; display: grid; width: min(440px, calc(100vw - 48px)); max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 8px; overflow-y: auto; padding: 9px; border: 1px solid #d9dce5; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(20, 24, 35, .16); }
-.schedule-task-option { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 7px; border-radius: 5px; color: #51586a; font-size: 10px; cursor: pointer; }
+.schedule-task-option { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 8px 7px; border-radius: 5px; color: #2f3545; font-size: 12px; font-weight: 600; cursor: pointer; }
 .schedule-task-option:hover { background: #f0f2fa; }
 .schedule-task-option input { width: 14px; height: 14px; flex: 0 0 14px; margin: 0; accent-color: #596fd1; }
 .schedule-task-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -676,7 +676,8 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .schedule-boss-difficulty.difficulty-extreme { border-color: #7756a9; background: #382b50; color: #d9c0ff; }
 .app-shell[data-theme='dark'] .schedule-boss-difficulty.difficulty-chaos { border-color: #9b6d36; background: #48351f; color: #ffd39b; }
 .app-shell[data-theme='dark'] .schedule-boss-difficulty.selected { border-color: #7185e0; box-shadow: inset 0 0 0 1px #7185e0; }
-.app-shell[data-theme='dark'] .schedule-task-option { color: #d5d8e3; }
+.app-shell[data-theme='dark'] .schedule-task-options { border-color: #414657; background: #20232d; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+.app-shell[data-theme='dark'] .schedule-task-option { color: #eef0f7; }
 .app-shell[data-theme='dark'] .schedule-task-option:hover { background: #2a2e3b; }
 .app-shell[data-theme='dark'] .character-party-link { border-color: #3c7451; background: #1e3528; color: #a7e1bb; }
 .app-shell[data-theme='dark'] .character-party-link:hover { background: #254431; }

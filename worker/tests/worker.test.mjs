@@ -352,11 +352,72 @@ test('adds only owned level-260-or-higher characters to a group roster', async (
   }
 });
 
-test('caps characters at twelve bosses and replaces only with equal or higher difficulty', async () => {
+test('creates multiple parties for one boss and returns member multipliers and scheduler data', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const createdParties = [];
+  const listedRows = [
+    {
+      partyId: 'party-1', bossId: 'chaos_kalos', familyId: 'kalos', createdAt: '2026-10-09T00:00:00.000Z',
+      ownerSub: 'google-subject', ownerEmail: 'member@example.test', nickname: '오잉느', ocid: 'ocid-1',
+      worldName: '스카니아', characterClass: '아델', level: 291, image: 'image-1',
+      schedulerJson: JSON.stringify({ boss_contents: [{ content_name: '감시자 칼로스', difficulty: 'chaos', complete_flag: 'true' }] }),
+      multiplier: '55',
+    },
+    {
+      partyId: 'party-2', bossId: 'chaos_kalos', familyId: 'kalos', createdAt: '2026-10-09T00:01:00.000Z',
+      ownerSub: 'other-subject', ownerEmail: 'other@example.test', nickname: '아잉느', ocid: 'ocid-2',
+      worldName: '루나', characterClass: '비숍', level: 280, image: 'image-2',
+      schedulerJson: JSON.stringify({ boss_contents: [{ content_name: '감시자 칼로스', difficulty: 'chaos', complete_flag: 'false' }] }),
+      multiplier: '50',
+    },
+  ];
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: 'member@example.test', email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM groups g JOIN group_members')
+        ? { id: 'group-1', name: 'Test group', created_by_sub: 'google-subject', created_by_email: 'member@example.test', role: 'admin' }
+        : null,
+      run: async () => { createdParties.push(values); return { success: true }; },
+      all: async () => ({ results: listedRows }),
+    }),
+  });
+  try {
+    const createParty = () => worker.fetch(new Request('https://worker.example.test/api/groups/group-1/parties', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bossId: 'chaos_kalos' }),
+    }), env);
+    const first = await createParty();
+    const second = await createParty();
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.notEqual((await first.json()).partyId, (await second.json()).partyId);
+    assert.equal(createdParties.length, 2);
+
+    const response = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1/parties', {
+      headers: { Authorization: 'Bearer valid-token' },
+    }), env);
+    assert.equal(response.status, 200);
+    const { parties } = await response.json();
+    assert.equal(parties.length, 2);
+    assert.deepEqual(parties.map(({ partyId }) => partyId), ['party-1', 'party-2']);
+    assert.equal(parties[0].members[0].multiplier, 55);
+    assert.equal(parties[0].members[0].scheduler.boss_contents[0].complete_flag, 'true');
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+  }
+});
+
+test('caps weekly bosses at twelve, excludes monthly bosses, and allows family difficulty changes', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;
   const originalBatch = env.DB.batch;
   const assignments = [];
+  const parties = new Map();
   globalThis.fetch = async () => Response.json({
     sub: 'google-subject', email: 'member@example.test', email_verified: true,
   });
@@ -369,18 +430,28 @@ test('caps characters at twelve bosses and replaces only with equal or higher di
           return { id: 'group-1', name: 'Test group', created_by_sub: 'google-subject', created_by_email: 'member@example.test', role: 'admin' };
         }
         if (query.includes('FROM group_characters gc JOIN characters')) return { ownerSub: 'google-subject', nickname: '오잉느' };
-        if (query.includes('SELECT boss_id AS bossId')) return assignments.find((assignment) => assignment.familyId === values[3]) || null;
-        if (query.includes('COUNT(*)')) return { count: assignments.length };
+        if (query.includes('SELECT p.party_id AS partyId')) return assignments.find((assignment) => assignment.familyId === values[3]) || null;
+        if (query.includes('COUNT(*)')) return { count: assignments.filter(({ familyId }) => familyId !== 'blackmage').length };
         return null;
       },
     }),
   });
   env.DB.batch = async (statements) => {
-    const [remove, add] = statements;
-    const familyId = remove.values[3];
-    const current = assignments.findIndex((assignment) => assignment.familyId === familyId);
-    if (current >= 0) assignments.splice(current, 1);
-    assignments.push({ bossId: add.values[3], familyId: add.values[4] });
+    const partyStatement = statements.find(({ query }) => query.includes('INSERT INTO group_boss_parties'));
+    if (partyStatement) {
+      parties.set(partyStatement.values[0], {
+        bossId: partyStatement.values[2],
+        familyId: partyStatement.values[3],
+      });
+    }
+    const remove = statements.find(({ query }) => query.includes('DELETE FROM group_boss_participants'));
+    if (remove) {
+      const current = assignments.findIndex((assignment) => assignment.partyId === remove.values[0]);
+      if (current >= 0) assignments.splice(current, 1);
+    }
+    const add = statements.find(({ query }) => query.includes('INSERT INTO group_boss_participants'));
+    const party = parties.get(add.values[0]);
+    assignments.push({ partyId: add.values[0], bossId: party.bossId, familyId: party.familyId });
   };
   const assign = (bossId) => worker.fetch(new Request('https://worker.example.test/api/groups/group-1/party-characters/ocid-1', {
     method: 'POST',
@@ -392,9 +463,13 @@ test('caps characters at twelve bosses and replaces only with equal or higher di
     const replace = await assign('chaos_kalos');
     assert.equal(replace.status, 200);
     assert.equal((await replace.json()).replacedBossId, 'normal_kalos');
-    assert.equal((await assign('normal_kalos')).status, 400);
+    const changeBack = await assign('normal_kalos');
+    assert.equal(changeBack.status, 200);
+    assert.equal((await changeBack.json()).replacedBossId, 'chaos_kalos');
     for (const family of 'abcdefghijk') assert.equal((await assign(`normal_boss${family}`)).status, 201);
     assert.equal(assignments.length, 12);
+    assert.equal((await assign('hard_blackmage')).status, 201);
+    assert.equal(assignments.length, 13);
     const overLimit = await assign('normal_bossm');
     assert.equal(overLimit.status, 400);
     assert.match((await overLimit.json()).error, /최대 12개/);

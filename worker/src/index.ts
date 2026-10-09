@@ -450,11 +450,12 @@ async function listGroupCharacters(env: Env, groupId: string, principal: GoogleP
       c.nickname, c.ocid, c.world_name AS worldName, c.character_class AS characterClass,
       c.character_level AS level, c.character_image AS image, c.scheduler_json AS schedulerJson,
       c.boss380_hexa_score AS boss380HexaScore,
-      p.boss_id AS bossId, p.family_id AS familyId
+      p.party_id AS partyId, bp.boss_id AS bossId, bp.family_id AS familyId
     FROM group_characters gc
     JOIN characters c ON c.google_sub = gc.google_sub AND lower(c.nickname) = lower(gc.nickname)
     LEFT JOIN group_boss_participants p
       ON p.group_id = gc.group_id AND p.google_sub = gc.google_sub AND lower(p.nickname) = lower(gc.nickname)
+    LEFT JOIN group_boss_parties bp ON bp.id = p.party_id
     WHERE gc.group_id = ?
     ORDER BY c.character_level DESC, c.nickname COLLATE NOCASE
   `).bind(group.id).all<{
@@ -468,21 +469,82 @@ async function listGroupCharacters(env: Env, groupId: string, principal: GoogleP
     image: string;
     schedulerJson: string;
     boss380HexaScore: number | null;
+    partyId: string | null;
     bossId: string | null;
     familyId: string | null;
   }>();
-  const characters = new Map<string, Record<string, unknown> & { bosses: Array<{ bossId: string; familyId: string }> }>();
+  const characters = new Map<string, Record<string, unknown> & { bosses: Array<{ partyId: string; bossId: string; familyId: string }> }>();
   for (const row of result.results || []) {
     const key = `${row.ownerSub}:${row.ocid}`;
     let character = characters.get(key);
     if (!character) {
-      const { schedulerJson, bossId: _bossId, familyId: _familyId, ...fields } = row;
+      const { schedulerJson, partyId: _partyId, bossId: _bossId, familyId: _familyId, ...fields } = row;
       character = { ...fields, scheduler: JSON.parse(schedulerJson || '{}'), bosses: [] };
       characters.set(key, character);
     }
-    if (row.bossId && row.familyId) character.bosses.push({ bossId: row.bossId, familyId: row.familyId });
+    if (row.partyId && row.bossId && row.familyId) {
+      character.bosses.push({ partyId: row.partyId, bossId: row.bossId, familyId: row.familyId });
+    }
   }
   return json({ characters: [...characters.values()] });
+}
+
+async function listGroupParties(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  const result = await env.DB.prepare(`
+    SELECT bp.id AS partyId, bp.boss_id AS bossId, bp.family_id AS familyId, bp.created_at AS createdAt,
+      p.google_sub AS ownerSub, gc.owner_email AS ownerEmail, c.nickname, c.ocid,
+      c.world_name AS worldName, c.character_class AS characterClass,
+      c.character_level AS level, c.character_image AS image, c.scheduler_json AS schedulerJson,
+      CAST(m.multiplier AS TEXT) AS multiplier
+    FROM group_boss_parties bp
+    LEFT JOIN group_boss_participants p ON p.party_id = bp.id
+    LEFT JOIN group_characters gc
+      ON gc.group_id = p.group_id AND gc.google_sub = p.google_sub AND lower(gc.nickname) = lower(p.nickname)
+    LEFT JOIN characters c ON c.google_sub = p.google_sub AND lower(c.nickname) = lower(p.nickname)
+    LEFT JOIN multipliers m
+      ON m.group_id = bp.group_id AND lower(m.nickname) = lower(p.nickname) AND m.boss_id = bp.boss_id
+    WHERE bp.group_id = ?
+    ORDER BY bp.created_at, c.character_level DESC, c.nickname COLLATE NOCASE
+  `).bind(group.id).all<{
+    partyId: string;
+    bossId: string;
+    familyId: string;
+    createdAt: string;
+    ownerSub: string | null;
+    ownerEmail: string | null;
+    nickname: string | null;
+    ocid: string | null;
+    worldName: string | null;
+    characterClass: string | null;
+    level: number | null;
+    image: string | null;
+    schedulerJson: string | null;
+    multiplier: string | null;
+  }>();
+  const parties = new Map<string, Record<string, unknown> & { members: Array<Record<string, unknown>> }>();
+  for (const row of result.results || []) {
+    let party = parties.get(row.partyId);
+    if (!party) {
+      party = {
+        partyId: row.partyId,
+        bossId: row.bossId,
+        familyId: row.familyId,
+        createdAt: row.createdAt,
+        members: [],
+      };
+      parties.set(row.partyId, party);
+    }
+    if (row.ownerSub && row.ownerEmail && row.nickname && row.ocid) {
+      const { schedulerJson, ...fields } = row;
+      party.members.push({
+        ...fields,
+        scheduler: JSON.parse(schedulerJson || '{}'),
+        multiplier: Number(row.multiplier || 0),
+      });
+    }
+  }
+  return json({ parties: [...parties.values()] });
 }
 
 async function addGroupCharacter(env: Env, groupId: string, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
@@ -529,9 +591,23 @@ function bossFamilyId(bossId: string): string {
   return match[1].toLowerCase();
 }
 
-function bossDifficultyRank(bossId: string): number {
-  const difficulty = bossId.split('_', 1)[0].toLowerCase();
-  return ({ easy: 1, normal: 2, hard: 3, chaos: 3, extreme: 4 } as Record<string, number>)[difficulty] || 0;
+async function createGroupParty(
+  env: Env,
+  groupId: string,
+  principal: GooglePrincipal,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  if (Object.keys(body).some((key) => key !== 'bossId')) throw new ApiError(400, 'bossId만 요청할 수 있습니다.');
+  const bossId = stringField(body, 'bossId', 80);
+  if (!bossIdPattern.test(bossId)) throw new ApiError(400, 'bossId 형식이 올바르지 않습니다.');
+  const partyId = crypto.randomUUID();
+  const familyId = bossFamilyId(bossId);
+  await env.DB.prepare(`
+    INSERT INTO group_boss_parties (id, group_id, boss_id, family_id, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(partyId, group.id, bossId, familyId, new Date().toISOString()).run();
+  return json({ partyId, bossId, familyId, created: true }, 201);
 }
 
 async function addGroupBossParticipant(
@@ -542,10 +618,13 @@ async function addGroupBossParticipant(
   body: Record<string, unknown>,
 ): Promise<Response> {
   const group = await getGroup(env, groupId, principal.email);
-  if (Object.keys(body).some((key) => key !== 'bossId')) throw new ApiError(400, 'bossId만 요청할 수 있습니다.');
+  if (Object.keys(body).some((key) => key !== 'bossId' && key !== 'partyId')) {
+    throw new ApiError(400, 'bossId와 partyId만 요청할 수 있습니다.');
+  }
   const bossId = stringField(body, 'bossId', 80);
   if (!bossIdPattern.test(bossId)) throw new ApiError(400, 'bossId 형식이 올바르지 않습니다.');
   const familyId = bossFamilyId(bossId);
+  const requestedPartyId = body.partyId === undefined ? null : stringField(body, 'partyId', 80);
   const character = await env.DB.prepare(`
     SELECT gc.google_sub AS ownerSub, gc.nickname
     FROM group_characters gc JOIN characters c
@@ -557,31 +636,63 @@ async function addGroupBossParticipant(
     throw new ApiError(403, '본인 캐릭터 또는 그룹 관리자만 파티를 편성할 수 있습니다.');
   }
   const existing = await env.DB.prepare(`
-    SELECT boss_id AS bossId FROM group_boss_participants
-    WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?) AND family_id = ?
-  `).bind(group.id, character.ownerSub, character.nickname, familyId).first<{ bossId: string }>();
-  if (existing?.bossId === bossId) return json({ bossId, familyId, added: false });
-  if (existing && bossDifficultyRank(bossId) < bossDifficultyRank(existing.bossId)) {
-    throw new ApiError(400, '더 높은 보상 난이도가 이미 파티에 편성되어 있습니다.');
+    SELECT p.party_id AS partyId, bp.boss_id AS bossId
+    FROM group_boss_participants p JOIN group_boss_parties bp ON bp.id = p.party_id
+    WHERE p.group_id = ? AND p.google_sub = ? AND lower(p.nickname) = lower(?) AND p.family_id = ?
+  `).bind(group.id, character.ownerSub, character.nickname, familyId)
+    .first<{ partyId: string; bossId: string }>();
+  if (existing && existing.bossId === bossId && (!requestedPartyId || requestedPartyId === existing.partyId)) {
+    return json({ partyId: existing.partyId, bossId, familyId, added: false });
   }
-  if (!existing) {
+  let targetPartyId = requestedPartyId;
+  let createTargetParty = !targetPartyId;
+  if (targetPartyId) {
+    const targetParty = await env.DB.prepare(`
+      SELECT boss_id AS bossId, family_id AS familyId
+      FROM group_boss_parties WHERE id = ? AND group_id = ?
+    `).bind(targetPartyId, group.id).first<{ bossId: string; familyId: string }>();
+    if (!targetParty) throw new ApiError(404, '그룹 파티를 찾을 수 없습니다.');
+    if (targetParty.bossId !== bossId || targetParty.familyId !== familyId) {
+      throw new ApiError(400, '파티의 보스가 요청한 보스와 일치하지 않습니다.');
+    }
+    createTargetParty = false;
+  } else {
+    targetPartyId = crypto.randomUUID();
+  }
+  if (!existing && familyId !== 'blackmage') {
     const count = await env.DB.prepare(`
       SELECT COUNT(*) AS count FROM group_boss_participants
       WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
+        AND family_id != 'blackmage'
     `).bind(group.id, character.ownerSub, character.nickname).first<{ count: number }>();
     if ((count?.count || 0) >= 12) throw new ApiError(400, '캐릭터 한 명은 최대 12개 보스 파티에만 참가할 수 있습니다.');
   }
-  await env.DB.batch([
-    env.DB.prepare(`
+  const statements = [];
+  if (createTargetParty) {
+    statements.push(env.DB.prepare(`
+      INSERT INTO group_boss_parties (id, group_id, boss_id, family_id, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(targetPartyId, group.id, bossId, familyId, new Date().toISOString()));
+  }
+  if (existing) {
+    statements.push(env.DB.prepare(`
       DELETE FROM group_boss_participants
-      WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?) AND family_id = ?
-    `).bind(group.id, character.ownerSub, character.nickname, familyId),
-    env.DB.prepare(`
-      INSERT INTO group_boss_participants (group_id, google_sub, nickname, boss_id, family_id, joined_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(group.id, character.ownerSub, character.nickname, bossId, familyId, new Date().toISOString()),
-  ]);
-  return json({ bossId, familyId, replacedBossId: existing?.bossId || null, added: true }, existing ? 200 : 201);
+      WHERE party_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
+    `).bind(existing.partyId, character.ownerSub, character.nickname));
+  }
+  statements.push(env.DB.prepare(`
+    INSERT INTO group_boss_participants (party_id, group_id, google_sub, nickname, family_id, joined_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(targetPartyId, group.id, character.ownerSub, character.nickname, familyId, new Date().toISOString()));
+  await env.DB.batch(statements);
+  return json({
+    partyId: targetPartyId,
+    bossId,
+    familyId,
+    replacedBossId: existing?.bossId || null,
+    moved: Boolean(existing),
+    added: true,
+  }, existing ? 200 : 201);
 }
 
 async function removeGroupBossParticipant(
@@ -592,8 +703,11 @@ async function removeGroupBossParticipant(
   body: Record<string, unknown>,
 ): Promise<Response> {
   const group = await getGroup(env, groupId, principal.email);
-  if (Object.keys(body).some((key) => key !== 'bossId')) throw new ApiError(400, 'bossId만 요청할 수 있습니다.');
+  if (Object.keys(body).some((key) => key !== 'bossId' && key !== 'partyId')) {
+    throw new ApiError(400, 'bossId와 partyId만 요청할 수 있습니다.');
+  }
   const bossId = stringField(body, 'bossId', 80);
+  const partyId = body.partyId === undefined ? null : stringField(body, 'partyId', 80);
   const character = await env.DB.prepare(`
     SELECT gc.google_sub AS ownerSub, gc.nickname
     FROM group_characters gc JOIN characters c
@@ -606,9 +720,10 @@ async function removeGroupBossParticipant(
   }
   await env.DB.prepare(`
     DELETE FROM group_boss_participants
-    WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?) AND boss_id = ?
-  `).bind(group.id, character.ownerSub, character.nickname, bossId).run();
-  return json({ bossId, removed: true });
+    WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
+      AND family_id = ? AND (? IS NULL OR party_id = ?)
+  `).bind(group.id, character.ownerSub, character.nickname, bossFamilyId(bossId), partyId, partyId).run();
+  return json({ bossId, partyId, removed: true });
 }
 
 async function importMapleScouterData(
@@ -731,6 +846,18 @@ async function route(request: Request, env: Env): Promise<Response> {
     const groupId = path[2];
     if (path.length === 4 && path[3] === 'invites' && request.method === 'POST') {
       return createGroupInvite(env, groupId, principal);
+    }
+    if (path.length === 4 && path[3] === 'parties' && request.method === 'GET') {
+      return listGroupParties(env, groupId, principal);
+    }
+    if (path.length === 4 && path[3] === 'parties' && request.method === 'POST') {
+      return createGroupParty(env, groupId, principal, await readBody(request));
+    }
+    if (path.length === 4 && path[3] === 'parties' && request.method === 'GET') {
+      return listGroupParties(env, groupId, principal);
+    }
+    if (path.length === 4 && path[3] === 'parties' && request.method === 'POST') {
+      return createGroupParty(env, groupId, principal, await readBody(request));
     }
     if (path.length === 4 && path[3] === 'characters' && request.method === 'GET') {
       return listGroupCharacters(env, groupId, principal);

@@ -11,7 +11,7 @@ const extensionCheckType = 'maple-scout/extension-check';
 const extensionStatusType = 'maple-scout/extension-status';
 const rememberLoginKey = 'maple-scout-remember-login';
 const themeKey = 'maple-scout-theme';
-const scheduleNotificationKeyPrefix = 'maple-scout-schedule-notifications:';
+const schedulePreferencesKeyPrefix = 'maple-scout-schedule-preferences:';
 const activeCharactersKeyPrefix = 'maple-scout-active-characters:';
 const nexonApiKeyCookie = 'maple-scout-nexon-api-key';
 const nexonApiKeyCookieMaxAge = 60 * 60 * 24 * 30;
@@ -72,8 +72,20 @@ function checkMapleScouterExtension() {
 
 function isIncomplete(item, boss = false) {
   if (boss) return item.complete_flag !== 'true' && item.complete_flag !== true;
-  if (item.type === 'quest') return item.quest_state !== '2';
-  return Number(item.now_count || 0) < Number(item.max_count || 0);
+  if (item.type === 'quest' && item.quest_state !== null && item.quest_state !== undefined) {
+    return String(item.quest_state) !== '2';
+  }
+  const maximum = Number(item.max_count || 0);
+  if (maximum > 0) return Number(item.now_count || 0) < maximum;
+  return item.registration_flag === 'true' || item.registration_flag === true;
+}
+
+function isRegistered(item) {
+  return item.registration_flag === 'true' || item.registration_flag === true;
+}
+
+function scheduleItemKey(item) {
+  return String(item.content_name || '').trim().toLocaleLowerCase('ko');
 }
 
 function readPreference(key, fallback) {
@@ -131,36 +143,158 @@ function recommendationsForCharacter(character, multipliers) {
     const key = entry.bossId.toLowerCase();
     multiplierByBoss.set(key, Math.max(value, multiplierByBoss.get(key) || 0));
   }
-  const bestByFamily = new Map();
+  const candidatesByFamily = new Map();
   for (const boss of bossRecommendationSettings.bosses) {
     const multiplier = multiplierByBoss.get(boss.bossId.toLowerCase());
-    if (!Number.isFinite(multiplier) || multiplier < boss.minimumMultiplier) continue;
-    const candidate = { ...boss, multiplier };
-    const current = bestByFamily.get(boss.familyId);
-    if (!current || candidate.rewardTier > current.rewardTier
-      || (candidate.rewardTier === current.rewardTier && candidate.multiplier > current.multiplier)) {
-      bestByFamily.set(boss.familyId, candidate);
-    }
+    if (!Number.isFinite(multiplier)) continue;
+    const maxPartySize = bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
+      || bossRecommendationSettings.defaultMaxPartySize;
+    const party = bossRecommendationSettings.partyMultiplierThresholds
+      .filter(({ partySize, minimumMultiplier }) => (
+        partySize <= maxPartySize && multiplier >= minimumMultiplier
+      ))
+      .sort((left, right) => left.partySize - right.partySize)[0];
+    if (!party) continue;
+    const candidate = {
+      ...boss,
+      multiplier,
+      maxPartySize,
+      difficultyRank: bossRecommendationSettings.difficultyRanks[boss.difficulty] || 0,
+      recommendedPartySize: party.partySize,
+      personalPrice: boss.changedPrice / party.partySize,
+    };
+    const familyCandidates = candidatesByFamily.get(boss.familyId) || [];
+    familyCandidates.push(candidate);
+    candidatesByFamily.set(boss.familyId, familyCandidates);
   }
-  return [...bestByFamily.values()]
-    .sort((left, right) => right.rewardTier - left.rewardTier
-      || right.multiplier - left.multiplier
-      || left.name.localeCompare(right.name, 'ko'))
-    .slice(0, bossRecommendationSettings.recommendationLimit);
+  const bestByFamily = [...candidatesByFamily.values()].map((familyCandidates) => {
+    const override = bossRecommendationSettings.highDifficultyOverrides.includes(familyCandidates[0].familyId);
+    if (override) {
+      return familyCandidates.sort((left, right) => right.difficultyRank - left.difficultyRank
+        || right.personalPrice - left.personalPrice)[0];
+    }
+    return familyCandidates.sort((left, right) => right.personalPrice - left.personalPrice
+      || right.difficultyRank - left.difficultyRank)[0];
+  });
+  const sortByPersonalPrice = (left, right) => right.personalPrice - left.personalPrice
+    || right.difficultyRank - left.difficultyRank
+    || left.name.localeCompare(right.name, 'ko');
+  const weekly = bestByFamily.filter(({ cycle }) => cycle === 'weekly').sort(sortByPersonalPrice);
+  const monthly = bestByFamily.filter(({ cycle }) => cycle === 'monthly').sort(sortByPersonalPrice);
+  return [
+    ...weekly.slice(0, bossRecommendationSettings.recommendationLimit),
+    ...monthly,
+  ];
 }
 
 function bossDetails(bossId) {
-  return bossRecommendationSettings.bosses.find((boss) => boss.bossId.toLowerCase() === bossId.toLowerCase())
-    || { bossId, name: bossId, difficultyLabel: '', rewardTier: 0, recommendedPartySize: 6 };
+  const boss = bossRecommendationSettings.bosses.find((entry) => entry.bossId.toLowerCase() === bossId.toLowerCase());
+  return boss ? {
+    ...boss,
+    maxPartySize: bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
+      || bossRecommendationSettings.defaultMaxPartySize,
+  } : { bossId, name: bossId, difficultyLabel: '', maxPartySize: 1, cycle: 'weekly' };
 }
 
-function difficultyRewardRank(bossId) {
-  return bossDetails(bossId).rewardTier;
+const scheduleDifficultyLabels = {
+  easy: '이지',
+  normal: '노말',
+  hard: '하드',
+  extreme: '익스트림',
+  chaos: '카오스',
+};
+
+function scheduleBossOption(item) {
+  const rawName = String(item.content_name || '').trim();
+  const compactName = rawName.toLocaleLowerCase('ko').replace(/\s+/g, ' ');
+  const name = ['칼로스', '감시자 칼로스', 'guardian kalos', 'kalos'].includes(compactName)
+    ? '감시자 칼로스'
+    : ['검은마법사', '검은 마법사', 'black mage'].includes(compactName)
+      ? '검은 마법사'
+      : rawName;
+  const difficulty = String(item.difficulty || item.difficulty_name || '').trim().toLowerCase();
+  const config = bossRecommendationSettings.bosses.find((boss) => (
+    boss.name.toLocaleLowerCase('ko') === name.toLocaleLowerCase('ko')
+      && boss.difficulty === difficulty
+  ));
+  const familyKey = config?.familyId || name.toLocaleLowerCase('ko');
+  return {
+    name,
+    familyKey,
+    difficulty,
+    difficultyLabel: scheduleDifficultyLabels[difficulty] || difficulty,
+    cycle: config?.cycle || (item.cycle === 'bossMonthly' ? 'monthly' : 'weekly'),
+    key: `${familyKey}::${difficulty}`,
+  };
 }
 
-function readScheduleNotificationPreferences(email) {
+function registeredScheduleKeys(items) {
+  return [...new Set(items.filter(isRegistered).map(scheduleItemKey))];
+}
+
+function registeredBossKeys(items) {
+  const selected = [];
+  const families = new Set();
+  let weeklyCount = 0;
+  for (const item of items) {
+    if (!isRegistered(item)) continue;
+    const option = scheduleBossOption(item);
+    if (families.has(option.familyKey)) continue;
+    if (option.cycle === 'weekly' && weeklyCount >= bossRecommendationSettings.maxBossesPerCharacter) continue;
+    selected.push(option.key);
+    families.add(option.familyKey);
+    if (option.cycle === 'weekly') weeklyCount += 1;
+  }
+  return selected;
+}
+
+function weeklyBossSelectionCount(keys) {
+  return keys.filter((key) => {
+    const familyId = key.slice(0, key.lastIndexOf('::'));
+    return !bossRecommendationSettings.bosses.some((boss) => (
+      boss.familyId === familyId && boss.cycle === 'monthly'
+    ));
+  }).length;
+}
+
+function limitBossKeysToWeeklyCap(keys) {
+  const families = new Set();
+  let weeklyCount = 0;
+  return keys.filter((key) => {
+    const familyId = key.slice(0, key.lastIndexOf('::'));
+    if (families.has(familyId)) return false;
+    families.add(familyId);
+    const isMonthly = bossRecommendationSettings.bosses.some((boss) => (
+      boss.familyId === familyId && boss.cycle === 'monthly'
+    ));
+    if (isMonthly) return true;
+    if (weeklyCount >= bossRecommendationSettings.maxBossesPerCharacter) return false;
+    weeklyCount += 1;
+    return true;
+  });
+}
+
+function summarizeBossParty(party) {
+  const boss = bossDetails(party.bossId);
+  const members = party.members || [];
+  const totalMultiplier = members.reduce((total, member) => total + (Number(member.multiplier) || 0), 0);
+  const matchingSchedules = members.flatMap((member) => (member.scheduler?.boss_contents || [])
+    .filter((item) => {
+      const option = scheduleBossOption(item);
+      return option.familyKey === boss.familyId && option.difficulty === boss.difficulty;
+    }));
+  const cleared = matchingSchedules.some((item) => item.complete_flag === true || item.complete_flag === 'true');
+  return {
+    totalMultiplier,
+    ready: totalMultiplier >= 100,
+    cleared,
+    statusLabel: cleared ? '클리어 확인' : matchingSchedules.length ? '미클리어' : '일정 확인 불가',
+  };
+}
+
+function readSchedulePreferences(email) {
   try {
-    return JSON.parse(window.localStorage.getItem(`${scheduleNotificationKeyPrefix}${email.toLowerCase()}`) || '{}');
+    return JSON.parse(window.localStorage.getItem(`${schedulePreferencesKeyPrefix}${email.toLowerCase()}`) || '{}');
   } catch {
     return {};
   }
@@ -216,13 +350,15 @@ function App() {
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [multipliers, setMultipliers] = useState([]);
   const [groupCharacters, setGroupCharacters] = useState([]);
+  const [groupParties, setGroupParties] = useState([]);
   const [allGroupCharacters, setAllGroupCharacters] = useState([]);
   const [allGroupMultipliers, setAllGroupMultipliers] = useState([]);
+  const [allGroupParties, setAllGroupParties] = useState([]);
+  const [focusedPartyId, setFocusedPartyId] = useState('');
+  const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
+  const [dragOverPartyId, setDragOverPartyId] = useState('');
   const [inviteLink, setInviteLink] = useState('');
-  const [scheduleNotificationPreferences, setScheduleNotificationPreferences] = useState({});
-  const [notificationPermission, setNotificationPermission] = useState(() => (
-    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
-  ));
+  const [schedulePreferences, setSchedulePreferences] = useState({});
   const [nexonKey, setNexonKey] = useState(readNexonApiKeyCookie);
   const [newGroupName, setNewGroupName] = useState('');
   const [busy, setBusy] = useState('');
@@ -255,32 +391,6 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!account?.email || notificationPermission !== 'granted') return;
-    for (const character of activeCharacters) {
-      const preferences = scheduleNotificationPreferences[character.ocid] || {};
-      const scheduler = character.scheduler || {};
-      const categories = [
-        { key: 'daily', items: (scheduler.daily_contents || []).filter((item) => isIncomplete(item)) },
-        { key: 'weekly', items: (scheduler.weekly_contents || []).filter((item) => isIncomplete(item)) },
-        { key: 'bosses', items: (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true)) },
-      ];
-      for (const category of categories) {
-        if (!preferences[category.key] || !category.items.length) continue;
-        const notifyKey = `maple-scout-notified:${account.email.toLowerCase()}:${character.ocid}:${category.key}:${scheduler.date || 'unknown'}`;
-        try {
-          if (window.localStorage.getItem(notifyKey)) continue;
-          window.localStorage.setItem(notifyKey, 'true');
-          const labels = category.items.slice(0, 3).map((item) => item.content_name).join(', ');
-          const remaining = category.items.length > 3 ? ` 외 ${category.items.length - 3}개` : '';
-          new Notification(`${character.nickname} 미완료 일정`, { body: `${labels}${remaining}`, tag: notifyKey });
-        } catch {
-          setNotice({ type: 'error', text: '브라우저 알림을 표시하지 못했습니다.' });
-        }
-      }
-    }
-  }, [account, activeCharacterIds, characters, notificationPermission, scheduleNotificationPreferences]);
-
-  useEffect(() => {
     function receiveMapleScouterResult(event) {
       if (event.origin !== mapleScouterOrigin || event.source !== mapleScouterPopup.current) return;
       const request = mapleScouterRequest.current;
@@ -307,33 +417,42 @@ function App() {
     if (!groupId) {
       setMultipliers([]);
       setGroupCharacters([]);
+      setGroupParties([]);
       setInviteLink('');
       return;
     }
-    const [multiplierResult, characterResult] = await Promise.all([
+    const [multiplierResult, characterResult, partyResult] = await Promise.all([
       workerRequest(token, `/api/groups/${encodeURIComponent(groupId)}/multipliers`),
       workerRequest(token, `/api/groups/${encodeURIComponent(groupId)}/characters`),
+      workerRequest(token, `/api/groups/${encodeURIComponent(groupId)}/parties`),
     ]);
     setMultipliers(multiplierResult.multipliers);
     setGroupCharacters(characterResult.characters || []);
+    setGroupParties(partyResult.parties || []);
   }
 
   async function loadAllGroupPartyData(token, groupsToLoad = groups) {
     const results = await Promise.all(groupsToLoad.map(async (group) => {
-      const [characterResult, multiplierResult] = await Promise.all([
+      const [characterResult, multiplierResult, partyResult] = await Promise.all([
         workerRequest(token, `/api/groups/${encodeURIComponent(group.id)}/characters`),
         workerRequest(token, `/api/groups/${encodeURIComponent(group.id)}/multipliers`),
+        workerRequest(token, `/api/groups/${encodeURIComponent(group.id)}/parties`),
       ]);
       return {
         groupId: group.id,
+        groupName: group.name,
         characters: characterResult.characters || [],
         multipliers: (multiplierResult.multipliers || []).map((entry) => ({ ...entry, groupId: group.id })),
+        parties: partyResult.parties || [],
       };
     }));
     setAllGroupCharacters(results.flatMap(({ groupId, characters: groupRoster }) => (
       groupRoster.map((character) => ({ ...character, groupId }))
     )));
     setAllGroupMultipliers(results.flatMap(({ multipliers: groupRows }) => groupRows));
+    setAllGroupParties(results.flatMap(({ groupId, groupName, parties }) => (
+      parties.map((party) => ({ ...party, groupId, groupName }))
+    )));
   }
 
   async function createGroupInvite() {
@@ -351,20 +470,37 @@ function App() {
       setBusy('');
     }
   }
-  async function assignBossToCharacter(character, boss) {
-    setBusy(`party:${character.ocid}:${boss.bossId}`);
+  async function createEmptyBossParty(boss) {
+    if (!selectedGroupId) return;
     try {
-      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/party-characters/${encodeURIComponent(character.ocid)}`, {
+      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/parties`, {
         method: 'POST',
         body: JSON.stringify({ bossId: boss.bossId }),
       });
       await loadGroupData(accessToken, selectedGroupId);
       await loadAllGroupPartyData(accessToken);
+      setNotice({ type: 'success', text: `${boss.difficultyLabel} ${boss.name} 새 파티를 만들었습니다.` });
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function assignBossToCharacter(character, boss, partyId = null) {
+    setBusy(`party:${character.ocid}:${boss.bossId}`);
+    try {
+      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/party-characters/${encodeURIComponent(character.ocid)}`, {
+        method: 'POST',
+        body: JSON.stringify({ bossId: boss.bossId, ...(partyId ? { partyId } : {}) }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+      await loadAllGroupPartyData(accessToken);
       setNotice({
         type: 'success',
-        text: result.replacedBossId
-          ? `${result.replacedBossId} 대신 ${boss.difficultyLabel} ${boss.name}으로 난이도를 변경했습니다.`
-          : `${boss.difficultyLabel} ${boss.name} 파티에 배정했습니다.`,
+        text: result.replacedBossId && result.replacedBossId !== boss.bossId
+          ? `${boss.difficultyLabel} ${boss.name}으로 난이도를 변경했습니다.`
+          : result.moved
+            ? `${boss.difficultyLabel} ${boss.name} 파티로 옮겼습니다.`
+            : `${boss.difficultyLabel} ${boss.name} 파티에 배정했습니다.`,
       });
     } catch (error) {
       reportError(error);
@@ -373,11 +509,11 @@ function App() {
     }
   }
 
-  async function unassignBossFromCharacter(character, bossId) {
+  async function unassignBossFromCharacter(character, bossId, partyId = null) {
     try {
       await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/party-characters/${encodeURIComponent(character.ocid)}`, {
         method: 'DELETE',
-        body: JSON.stringify({ bossId }),
+        body: JSON.stringify({ bossId, ...(partyId ? { partyId } : {}) }),
       });
       await loadGroupData(accessToken, selectedGroupId);
       await loadAllGroupPartyData(accessToken);
@@ -386,35 +522,83 @@ function App() {
     }
   }
 
-  function updateScheduleNotificationPreference(ocid, category, enabled) {
-    const next = {
-      ...scheduleNotificationPreferences,
-      [ocid]: { ...scheduleNotificationPreferences[ocid], [category]: enabled },
-    };
-    setScheduleNotificationPreferences(next);
-    if (enabled && notificationPermission === 'default') {
-      void requestScheduleNotificationPermission();
+  function getCharacterBossMultiplier(character, bossId) {
+    return Math.max(0, ...multipliers
+      .filter((entry) => entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+        && entry.bossId?.toLowerCase() === bossId.toLowerCase())
+      .map((entry) => Number(entry.multiplier) || 0));
+  }
+
+  function startPartyMemberDrag(event, character) {
+    if (character.ownerSub !== account?.sub && selectedGroup?.role !== 'admin') {
+      event.preventDefault();
+      return;
     }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', character.ocid);
+    setDraggedPartyCharacter(character);
+  }
+
+  function dragOverParty(event, party) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDragOverPartyId(party.partyId);
+  }
+
+  async function dropCharacterOnParty(event, party) {
+    event.preventDefault();
+    setDragOverPartyId('');
+    const ocid = event.dataTransfer.getData('text/plain');
+    const character = groupCharacters.find((entry) => entry.ocid === ocid);
+    if (!character) return;
+    await assignBossToCharacter(character, bossDetails(party.bossId), party.partyId);
+    setDraggedPartyCharacter(null);
+  }
+
+  function finishPartyMemberDrag() {
+    setDraggedPartyCharacter(null);
+    setDragOverPartyId('');
+  }
+
+  function updateSchedulePreferences(ocid, updates) {
+    const next = {
+      ...schedulePreferences,
+      [ocid]: { ...schedulePreferences[ocid], ...updates },
+    };
+    setSchedulePreferences(next);
     if (account?.email) {
       try {
-        window.localStorage.setItem(`${scheduleNotificationKeyPrefix}${account.email.toLowerCase()}`, JSON.stringify(next));
+        window.localStorage.setItem(`${schedulePreferencesKeyPrefix}${account.email.toLowerCase()}`, JSON.stringify(next));
       } catch {
-        setNotice({ type: 'error', text: '일정 알림 설정을 저장하지 못했습니다.' });
+        setNotice({ type: 'error', text: '미완료 일정 선택을 저장하지 못했습니다.' });
       }
     }
   }
 
-  async function requestScheduleNotificationPermission() {
-    if (!('Notification' in window)) {
-      setNotice({ type: 'error', text: '이 브라우저는 데스크톱 알림을 지원하지 않습니다.' });
+  function updateScheduleTaskSelection(ocid, category, taskKey, enabled, displayedKeys) {
+    const saved = schedulePreferences[ocid]?.[category];
+    const selected = Array.isArray(saved) ? saved : displayedKeys;
+    const next = enabled
+      ? [...new Set([...selected, taskKey])]
+      : selected.filter((key) => key !== taskKey);
+    updateSchedulePreferences(ocid, { [category]: next });
+  }
+
+  function updateScheduleBossSelection(ocid, boss, enabled, displayedKeys) {
+    const saved = schedulePreferences[ocid]?.bosses;
+    const selected = Array.isArray(saved) ? saved : displayedKeys;
+    const familySelection = selected.find((key) => key.slice(0, key.lastIndexOf('::')) === boss.familyKey);
+    if (enabled && familySelection && familySelection !== boss.key) {
+      setNotice({ type: 'error', text: '같은 보스는 한 난이도만 선택할 수 있습니다.' });
       return;
     }
-    const permission = await Notification.requestPermission();
-    setNotificationPermission(permission);
-    setNotice({
-      type: permission === 'granted' ? 'success' : 'error',
-      text: permission === 'granted' ? '일정 알림을 허용했습니다.' : '브라우저 사이트 설정에서 알림을 허용해 주세요.',
-    });
+    if (enabled && boss.cycle === 'weekly' && !familySelection
+      && weeklyBossSelectionCount(selected) >= bossRecommendationSettings.maxBossesPerCharacter) {
+      setNotice({ type: 'error', text: `캐릭터당 최대 ${bossRecommendationSettings.maxBossesPerCharacter}개 보스까지 선택할 수 있습니다.` });
+      return;
+    }
+    const next = enabled ? [...selected, boss.key] : selected.filter((key) => key !== boss.key);
+    updateSchedulePreferences(ocid, { bosses: next });
   }
 
   async function copyGroupInvite() {
@@ -500,7 +684,7 @@ function App() {
       setCharacters(savedCharacters);
       setActiveCharacterIds(savedActiveCharacterIds);
       setSelectedCharacterId(savedActiveCharacterIds[0] || '');
-      setScheduleNotificationPreferences(readScheduleNotificationPreferences(profile.email));
+      setSchedulePreferences(readSchedulePreferences(profile.email));
       const inviteToken = new URLSearchParams(window.location.search).get('invite');
       let inviteGroupId = '';
       if (inviteToken) {
@@ -812,6 +996,10 @@ function App() {
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
   const activeCharacters = characters.filter(({ ocid }) => activeCharacterIds.includes(ocid));
+  const activeOcids = new Set(activeCharacters.map(({ ocid }) => ocid));
+  const personalParties = allGroupParties.filter((party) => (
+    (party.members || []).some((member) => member.ownerSub === account?.sub && activeOcids.has(member.ocid))
+  ));
   const normalizedSearch = characterSearch.trim().toLocaleLowerCase('ko');
   const filteredActiveCharacters = activeCharacters.filter((character) => {
     const matchesSearch = !normalizedSearch || [character.nickname, character.characterClass, character.worldName]
@@ -1211,16 +1399,42 @@ function App() {
                       <div className="my-schedule-list">
                         {activeCharacters.map((character) => {
                           const scheduler = character.scheduler || {};
-                          const daily = (scheduler.daily_contents || []).filter((item) => isIncomplete(item));
-                          const weekly = (scheduler.weekly_contents || []).filter((item) => isIncomplete(item));
-                          const bosses = (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true));
+                          const preferences = schedulePreferences[character.ocid] || {};
+                          const availableDaily = scheduler.daily_contents || [];
+                          const availableWeekly = scheduler.weekly_contents || [];
+                          const selectedDailyKeys = Array.isArray(preferences.daily)
+                            ? preferences.daily
+                            : registeredScheduleKeys(availableDaily);
+                          const selectedWeeklyKeys = Array.isArray(preferences.weekly)
+                            ? preferences.weekly
+                            : registeredScheduleKeys(availableWeekly);
+                          const availableBosses = [...new Map((scheduler.boss_contents || [])
+                            .map((item) => {
+                              const option = scheduleBossOption(item);
+                              return [option.key, { item, option }];
+                            })).values()];
+                          const selectedBossKeys = Array.isArray(preferences.bosses)
+                            ? limitBossKeysToWeeklyCap(preferences.bosses)
+                            : registeredBossKeys(scheduler.boss_contents || []);
+                          const weeklyBosses = availableBosses
+                            .filter(({ item, option }) => option.cycle === 'weekly' && selectedBossKeys.includes(option.key) && isIncomplete(item, true))
+                            .map(({ item }) => item);
+                          const monthlyBosses = availableBosses
+                            .filter(({ item, option }) => option.cycle === 'monthly' && selectedBossKeys.includes(option.key) && isIncomplete(item, true))
+                            .map(({ item }) => item);
+                          const daily = availableDaily.filter((item) => (
+                            selectedDailyKeys.includes(scheduleItemKey(item)) && isIncomplete(item)
+                          ));
+                          const weekly = availableWeekly.filter((item) => (
+                            selectedWeeklyKeys.includes(scheduleItemKey(item)) && isIncomplete(item)
+                          ));
                           const categories = [
-                            { id: 'daily', icon: '◷', label: '일일', items: daily },
-                            { id: 'weekly', icon: '▦', label: '주간', items: weekly },
-                            { id: 'bosses', icon: '⚔', label: '보스', items: bosses },
-                          ];
-                          const incompleteCount = daily.length + weekly.length + bosses.length;
-                          const preferences = scheduleNotificationPreferences[character.ocid] || {};
+                            { id: 'daily', icon: '◷', label: '일일', items: daily, visible: selectedDailyKeys.length > 0 },
+                            { id: 'weekly', icon: '▦', label: '주간', items: weekly, visible: selectedWeeklyKeys.length > 0 },
+                            { id: 'bosses', icon: '⚔', label: '주간 보스', items: weeklyBosses, visible: weeklyBossSelectionCount(selectedBossKeys) > 0 },
+                            { id: 'monthly-bosses', icon: '⚔', label: '월간 보스', items: monthlyBosses, visible: selectedBossKeys.length > weeklyBossSelectionCount(selectedBossKeys) },
+                          ].filter((category) => category.visible);
+                          const incompleteCount = daily.length + weekly.length + weeklyBosses.length + monthlyBosses.length;
                           return (
                             <article className="my-schedule-character" key={character.ocid}>
                               <header className="my-schedule-character-heading">
@@ -1228,20 +1442,72 @@ function App() {
                                 <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'} · 미완료 {incompleteCount}</small></div>
                                 <span className={`schedule-total ${incompleteCount ? 'has-pending' : ''}`}>{scheduler.date || '기록 없음'}</span>
                               </header>
-                              <div className="schedule-alert-options" aria-label={`${character.nickname} 알림 종류`}>
-                                {categories.map((category) => (
-                                  <label className="schedule-alert-option" key={category.id}>
-                                    <input
-                                      type="checkbox"
-                                      aria-label={`${character.nickname} ${category.label} 일정 알림`}
-                                      checked={Boolean(preferences[category.id])}
-                                      onChange={(event) => updateScheduleNotificationPreference(character.ocid, category.id, event.target.checked)}
-                                    />
-                                    <span>{category.icon} {category.label} 알림</span>
-                                  </label>
+                              <div className="schedule-preferences" aria-label={`${character.nickname} 표시할 일정 선택`}>
+                                <span className="schedule-preferences-label">표시할 일정</span>
+                                {[
+                                  { id: 'daily', label: '일일', icon: '◷', items: availableDaily, keys: selectedDailyKeys },
+                                  { id: 'weekly', label: '주간', icon: '▦', items: availableWeekly, keys: selectedWeeklyKeys },
+                                ].map((category) => (
+                                  <details className="schedule-boss-picker schedule-task-picker" key={category.id}>
+                                    <summary>{`${category.label} 선택 ${category.keys.length}/${category.items.length}`}</summary>
+                                    {category.items.length ? (
+                                      <div className="schedule-boss-options">
+                                        {category.items.map((item) => {
+                                          const taskKey = scheduleItemKey(item);
+                                          const selected = category.keys.includes(taskKey);
+                                          return (
+                                            <label className="schedule-boss-option" key={taskKey}>
+                                              <input
+                                                type="checkbox"
+                                                aria-label={`${character.nickname} ${category.label} 일정 ${item.content_name} 표시`}
+                                                checked={selected}
+                                                onChange={(event) => updateScheduleTaskSelection(
+                                                  character.ocid,
+                                                  category.id,
+                                                  taskKey,
+                                                  event.target.checked,
+                                                  category.keys,
+                                                )}
+                                              />
+                                              <span>{item.content_name}</span>
+                                              <small>{isIncomplete(item) ? '미완료' : '완료'}</small>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : <p className="schedule-boss-empty">넥슨 API에서 가져온 일정이 없습니다.</p>}
+                                  </details>
                                 ))}
+                                <details className="schedule-boss-picker">
+                                  <summary>{`주간 보스 ${weeklyBossSelectionCount(selectedBossKeys)}/${bossRecommendationSettings.maxBossesPerCharacter} · 월간 ${selectedBossKeys.length - weeklyBossSelectionCount(selectedBossKeys)}종`}</summary>
+                                  {availableBosses.length ? (
+                                    <div className="schedule-boss-options">
+                                      {availableBosses.map(({ item, option }) => {
+                                        const selected = selectedBossKeys.includes(option.key);
+                                        const familySelection = selectedBossKeys.find((key) => key.slice(0, key.lastIndexOf('::')) === option.familyKey);
+                                        const familyConflict = Boolean(familySelection && familySelection !== option.key);
+                                        const atLimit = option.cycle === 'weekly' && !selected && !familySelection
+                                          && weeklyBossSelectionCount(selectedBossKeys) >= bossRecommendationSettings.maxBossesPerCharacter;
+                                        const label = `${option.difficultyLabel ? `${option.difficultyLabel} ` : ''}${option.name || item.content_name}`;
+                                        return (
+                                          <label className="schedule-boss-option" key={option.key}>
+                                            <input
+                                              type="checkbox"
+                                              aria-label={`${character.nickname} 보스 일정 ${label} 표시`}
+                                              checked={selected}
+                                              disabled={familyConflict || atLimit}
+                                              onChange={(event) => updateScheduleBossSelection(character.ocid, option, event.target.checked, selectedBossKeys)}
+                                            />
+                                            <span>{label}</span>
+                                            <small>{isIncomplete(item, true) ? '미완료' : '완료'}</small>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : <p className="schedule-boss-empty">선택할 미완료 보스가 없습니다.</p>}
+                                </details>
                               </div>
-                              <div className="schedule-task-groups">
+                              {categories.length ? <div className="schedule-task-groups">
                                 {categories.map((category) => (
                                   <section className="schedule-task-group" key={category.id} aria-label={`${character.nickname} ${category.label} 일정`}>
                                     <h3><span aria-hidden="true">{category.icon}</span>{category.label}<span>{category.items.length}</span></h3>
@@ -1249,19 +1515,21 @@ function App() {
                                       {category.items.length ? category.items.map((item, index) => (
                                         <span className={`task-chip pending task-${category.id}`} key={`${item.content_name}-${item.difficulty || ''}-${index}`}>
                                           <span className="task-chip-icon" aria-hidden="true">{category.icon}</span>
-                                          {item.content_name}{item.difficulty ? ` ${item.difficulty}` : ''}{category.id !== 'bosses' && item.max_count > 1 ? ` (${item.now_count || 0}/${item.max_count})` : ''}
+                                          {category.id.includes('bosses')
+                                            ? `${scheduleBossOption(item).difficultyLabel ? `${scheduleBossOption(item).difficultyLabel} ` : ''}${scheduleBossOption(item).name || item.content_name}`
+                                            : `${item.content_name}${item.max_count > 1 ? ` (${item.now_count || 0}/${item.max_count})` : ''}`}
                                         </span>
                                       )) : <span className="task-chip completed">완료</span>}
                                     </div>
                                   </section>
                                 ))}
-                              </div>
+                              </div> : <p className="schedule-selection-empty">표시할 일정이나 보스를 선택하세요.</p>}
                             </article>
                           );
                         })}
                       </div>
                     )}
-                    <p className="privacy-note">브라우저 알림은 이 앱이 열려 있을 때 갱신된 일정 기준으로 표시됩니다. 알림 종류는 캐릭터별로 저장됩니다.</p>
+                    <p className="privacy-note">표시할 일정 종류와 보스 선택은 캐릭터별로 저장됩니다. 보스는 캐릭터당 최대 12개, 같은 보스는 한 난이도만 선택할 수 있습니다.</p>
                   </section>
                 </>
               )}
@@ -1321,7 +1589,7 @@ function App() {
                                   <div className="group-party-heading">
                                     {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder">◇</span>}
                                     <div><p className="eyebrow">{config.difficultyLabel}</p><h3>{config.name}</h3></div>
-                                    <span className="party-size-count">{participants.length}/{config.recommendedPartySize}인</span>
+                                    <span className="party-size-count">{participants.length}/{config.maxPartySize}인</span>
                                   </div>
                                   <div className="group-party-members">
                                     {participants.map((character) => (
@@ -1401,7 +1669,7 @@ function App() {
                       <section className="group-roster-section panel-section">
                         <div className="section-heading">
                           <div><p className="eyebrow">GROUP ROSTER</p><h2>캐릭터별 보스 파티 편성</h2></div>
-                          <span className="updated-count">캐릭터당 최대 {bossRecommendationSettings.maxBossesPerCharacter}개 보스 · 난이도 가족별 1개</span>
+                          <span className="updated-count">주간 {bossRecommendationSettings.maxBossesPerCharacter}종 · 월간 별도 · 보스별 가족 1난이도</span>
                         </div>
                         {groupCharacters.length ? (
                           <div className="group-roster-list">
@@ -1412,7 +1680,13 @@ function App() {
                                 <article className="group-roster-character" key={`${character.ownerSub}:${character.ocid}`}>
                                   <header className="group-roster-character-heading">
                                     {character.image ? <img src={character.image} alt="" /> : <span className="boss-placeholder">◇</span>}
-                                    <div><h3>{character.nickname}</h3><p>{character.ownerEmail} · Lv. {character.level} · {assignedBosses.length}/{bossRecommendationSettings.maxBossesPerCharacter} 보스</p></div>
+                                    <div>
+                                      <h3>{character.nickname}</h3>
+                                      <p>
+                                        {character.ownerEmail} · Lv. {character.level} · 주간 {assignedBosses.filter(({ bossId }) => bossDetails(bossId).cycle !== 'monthly').length}/{bossRecommendationSettings.maxBossesPerCharacter}
+                                        {assignedBosses.some(({ bossId }) => bossDetails(bossId).cycle === 'monthly') ? ' + 월간' : ''} 보스
+                                      </p>
+                                    </div>
                                     {(character.ownerSub === account?.sub || selectedGroup.role === 'admin') && (
                                       <button className="quiet-button remove-roster-character" type="button" onClick={() => removeCharacterFromGroup(character)} aria-label={`${character.nickname} 그룹에서 제거`}>그룹에서 제거</button>
                                     )}
@@ -1428,21 +1702,28 @@ function App() {
                                     }) : <span className="updated-count">아직 참가 중인 보스가 없습니다</span>}
                                   </div>
                                   <div className="recommendation-list">
-                                    <div className="recommendation-heading"><strong>추천 보스</strong><span>배율 임계치 · 보상 순위 기준</span></div>
+                                    <div className="recommendation-heading"><strong>추천 보스</strong><span>개인 메소 수익 · 상위 난이도 우선 가족 반영</span></div>
                                     {recommendations.length ? recommendations.map((boss) => {
                                       const existing = assignedBosses.find((assignment) => assignment.familyId === boss.familyId);
-                                      const existingBoss = existing ? bossDetails(existing.bossId) : null;
-                                      const lowerReward = existingBoss && boss.rewardTier < existingBoss.rewardTier;
-                                      const full = assignedBosses.length >= bossRecommendationSettings.maxBossesPerCharacter && !existing;
+                                      const full = boss.cycle === 'weekly'
+                                        && assignedBosses.filter(({ bossId }) => bossDetails(bossId).cycle !== 'monthly').length >= bossRecommendationSettings.maxBossesPerCharacter
+                                        && !existing;
                                       const alreadyAssigned = existing?.bossId === boss.bossId;
                                       const busyKey = `party:${character.ocid}:${boss.bossId}`;
                                       const icon = bossImages[`./bossImage/${boss.bossId}.png`];
                                       return (
                                         <article className="recommendation-row" key={boss.bossId}>
                                           {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder small-placeholder">◇</span>}
-                                          <div className="recommendation-boss-title"><strong>{boss.difficultyLabel} {boss.name}</strong><small>배율 {boss.multiplier}% · 추천 {boss.recommendedPartySize}인 · 보상 티어 {boss.rewardTier}</small></div>
-                                          <button className="outline-button" type="button" disabled={alreadyAssigned || lowerReward || full || busy === busyKey} onClick={() => assignBossToCharacter(character, boss)}>
-                                            {busy === busyKey ? '저장 중...' : alreadyAssigned ? '참가 중' : full ? '12개 한도' : lowerReward ? '상위 난이도 참가 중' : existing ? '난이도 변경' : '파티 배정'}
+                                          <div className="recommendation-boss-title">
+                                            <strong>{boss.difficultyLabel} {boss.name}</strong>
+                                            <small>
+                                              총 {boss.changedPrice.toLocaleString('ko-KR')} 메소 · 개인 {Math.floor(boss.personalPrice).toLocaleString('ko-KR')} 메소
+                                              <span className="party-recommendation-badge">{boss.recommendedPartySize}인 추천</span>
+                                              {boss.cycle === 'monthly' && <span className="boss-cycle-badge">월간</span>}
+                                            </small>
+                                          </div>
+                                          <button className="outline-button" type="button" disabled={alreadyAssigned || full || busy === busyKey} onClick={() => assignBossToCharacter(character, boss)}>
+                                            {busy === busyKey ? '저장 중...' : alreadyAssigned ? '참가 중' : full ? '12개 한도' : existing ? '난이도 변경' : '파티 배정'}
                                           </button>
                                         </article>
                                       );

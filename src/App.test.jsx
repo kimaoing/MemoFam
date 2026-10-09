@@ -123,6 +123,16 @@ test('remembers the Nexon API key in a cookie only when requested', async () => 
 
 test('syncs all characters with one Nexon API key and refreshes a selected character', async () => {
   const workerCalls = [];
+  const scheduleBosses = [
+    { content_name: '검은 마법사', difficulty: 'hard', complete_flag: 'false' },
+    { content_name: '감시자 칼로스', difficulty: 'normal', complete_flag: 'false' },
+    { content_name: '칼로스', difficulty: 'chaos', complete_flag: 'false' },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      content_name: `테스트 보스 ${index + 1}`,
+      difficulty: 'normal',
+      complete_flag: 'false',
+    })),
+  ];
   const mapleScouterPopup = { location: { href: '' }, close: vi.fn() };
   const extensionChecks = [];
   vi.spyOn(window, 'open').mockReturnValue(mapleScouterPopup);
@@ -153,8 +163,12 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       scheduler: {
         date: '2026-10-08',
         daily_contents: [{ content_name: '일일 퀘스트', type: 'quest', quest_state: '1' }],
-        weekly_contents: [],
-        boss_contents: [],
+        weekly_contents: [
+          { content_name: '에픽 던전 : 하이마운틴', type: 'contents', registration_flag: 'true', now_count: 0, max_count: 0, quest_state: null },
+          { content_name: '에픽 던전 : 아우룸 레기스', type: 'contents', registration_flag: 'false', now_count: 0, max_count: 0, quest_state: null },
+          { content_name: '[메이플 유니온] 주간 드래곤 퇴치', type: 'quest', registration_flag: 'false', now_count: 0, max_count: 0, quest_state: '0' },
+        ],
+        boss_contents: scheduleBosses,
       },
     },
     {
@@ -169,7 +183,6 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     },
     {
       nickname: '최고레벨',
-      ocid: 'ocid-3',
       worldName: '에오스',
       characterClass: '아크메이지',
       level: 285,
@@ -251,6 +264,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
               ? { multipliers: [
                 { nickname: '오잉느', bossId: 'normal_kalos', multiplier: 100 },
                 { nickname: '오잉느', bossId: 'chaos_kalos', multiplier: 50 },
+                { nickname: '오잉느', bossId: 'normal_bardrix', multiplier: 100 },
+                { nickname: '오잉느', bossId: 'hard_bardrix', multiplier: 33 },
               ] }
             : path.endsWith('/bosses')
               ? { bossIds: ['normal_kaling'] }
@@ -301,7 +316,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(screen.queryByRole('button', { name: /세번째/ })).toBeNull();
   expect(screen.getByText('72,807')).toBeDefined();
   const unassignedIndicator = screen.getByLabelText('오잉느 추천 보스가 그룹 파티에 편성되지 않음');
-  expect(unassignedIndicator.getAttribute('title')).toContain('카오스 칼로스');
+  expect(unassignedIndicator.getAttribute('title')).toContain('카오스 감시자 칼로스');
 
   fireEvent.change(screen.getByRole('searchbox', { name: '캐릭터 검색' }), { target: { value: '아잉' } });
   expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
@@ -312,10 +327,30 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(screen.queryByRole('button', { name: /아잉느/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '필터 초기화' }));
 
-  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 일일 일정 알림' }));
-  expect(JSON.parse(window.localStorage.getItem('maple-scout-schedule-notifications:member@example.test')))
-    .toEqual({ 'ocid-1': { daily: true } });
-  expect(screen.getByText('일일 퀘스트')).toBeDefined();
+  fireEvent.click(screen.getByText('일일 선택 0/1'));
+  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 일일 일정 일일 퀘스트 표시' }));
+  expect(JSON.parse(window.localStorage.getItem('maple-scout-schedule-preferences:member@example.test')))
+    .toEqual({ 'ocid-1': { daily: ['일일 퀘스트'] } });
+  expect(screen.getByText('일일 퀘스트', { selector: '.task-chip' })).toBeDefined();
+  expect(screen.getByText('에픽 던전 : 하이마운틴', { selector: '.task-chip' })).toBeDefined();
+  expect(screen.queryByText('에픽 던전 : 아우룸 레기스', { selector: '.task-chip' })).toBeNull();
+  fireEvent.click(screen.getByText('주간 선택 1/3'));
+  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 주간 일정 [메이플 유니온] 주간 드래곤 퇴치 표시' }));
+  expect(screen.getByText('[메이플 유니온] 주간 드래곤 퇴치', { selector: '.task-chip' })).toBeDefined();
+  fireEvent.click(screen.getAllByText(/^주간 보스 0\/12/)[0]);
+  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 하드 검은 마법사 표시' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 카오스 감시자 칼로스 표시' }));
+  expect(screen.getByRole('checkbox', { name: '오잉느 보스 일정 노말 감시자 칼로스 표시' }).disabled).toBe(true);
+  for (let index = 1; index <= 11; index += 1) {
+    fireEvent.click(screen.getByRole('checkbox', { name: `오잉느 보스 일정 노말 테스트 보스 ${index} 표시` }));
+  }
+  expect([...document.querySelectorAll('.schedule-boss-picker summary')]
+    .map(({ textContent }) => textContent)
+    .filter((text) => text.startsWith('주간 보스')))
+    .toEqual(['주간 보스 12/12 · 월간 1종', '주간 보스 0/12 · 월간 0종']);
+  expect(screen.getByRole('checkbox', { name: '오잉느 보스 일정 노말 테스트 보스 12 표시' }).disabled).toBe(true);
+  expect(screen.getByText('하드 검은 마법사', { selector: '.task-chip' })).toBeDefined();
+  expect(screen.getByText('카오스 감시자 칼로스', { selector: '.task-chip' })).toBeDefined();
 
   fireEvent.click(screen.getByRole('button', { name: /아잉느/ }));
   fireEvent.click(screen.getByTitle('Test group'));
@@ -324,12 +359,20 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByRole('button', { name: '그룹 및 파티 관리' }));
   const addOwnCharacterButton = screen.getByText('오잉느').closest('.group-add-character').querySelector('button');
   fireEvent.click(addOwnCharacterButton);
-  const chaosKalosRecommendation = await screen.findByText('카오스 칼로스');
-  expect(chaosKalosRecommendation.closest('.recommendation-row').textContent).toContain('추천 2인');
+  const chaosKalosRecommendation = await screen.findByText('카오스 감시자 칼로스');
+  expect(screen.getByText('2인 추천').closest('.recommendation-row')).toBeDefined();
+  expect(chaosKalosRecommendation.closest('.recommendation-row').textContent).toContain('개인 636,500,000 메소');
+  const hardBardrixRecommendation = screen.getByText('하드 발드릭스', { selector: '.recommendation-boss-title strong' });
+  expect(hardBardrixRecommendation.closest('.recommendation-row').textContent).toContain('3인 추천');
+  expect(hardBardrixRecommendation.closest('.recommendation-row').textContent).toContain('개인 1,026,000,000 메소');
+  expect(screen.queryByText('노말 발드릭스', { selector: '.recommendation-boss-title strong' })).toBeNull();
   fireEvent.click(chaosKalosRecommendation.closest('.recommendation-row').querySelector('button'));
-  await waitFor(() => expect(screen.getByText('카오스 칼로스', { selector: '.assigned-boss-chip span:first-child' })).toBeDefined());
+  await waitFor(() => expect(screen.getByText('카오스 감시자 칼로스', { selector: '.assigned-boss-chip span:first-child' })).toBeDefined());
   fireEvent.click(screen.getByTitle('내 정보'));
-  await waitFor(() => expect(screen.queryByLabelText('오잉느 추천 보스가 그룹 파티에 편성되지 않음')).toBeNull());
+  await waitFor(() => expect(screen.getByLabelText('오잉느 추천 보스가 그룹 파티에 편성되지 않음').getAttribute('title'))
+    .not.toContain('카오스 감시자 칼로스'));
+  expect(screen.getByLabelText('오잉느 추천 보스가 그룹 파티에 편성되지 않음').getAttribute('title'))
+    .toContain('하드 발드릭스');
   fireEvent.click(screen.getByTitle('Test group'));
   await waitFor(() => expect(screen.queryByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeNull());
   fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));

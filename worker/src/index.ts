@@ -1,11 +1,15 @@
 interface Env {
   DB: D1Database;
   APP_ORIGINS: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
+  SESSION_ENCRYPTION_KEY: string;
 }
 
 interface GooglePrincipal {
   sub: string;
   email: string;
+  name?: string;
 }
 
 interface GroupRow {
@@ -20,6 +24,19 @@ interface GoogleUserInfo {
   sub: string;
   email: string;
   email_verified: boolean;
+  name?: string;
+}
+
+interface AuthSessionRow {
+  tokenHash: string;
+  sub: string;
+  email: string;
+  name: string;
+  refreshTokenCiphertext: string;
+  accessTokenCiphertext: string;
+  accessTokenExpiresAt: number;
+  expiresAt: number;
+  remember: number;
 }
 
 class ApiError extends Error {
@@ -33,8 +50,72 @@ const bossIdPattern = /^[a-z]+_[A-Za-z]+$/;
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
   });
+}
+
+const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1000;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+function toHex(bytes: Uint8Array): string {
+  return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function sha256(value: string): Promise<string> {
+  return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', textEncoder.encode(value))));
+}
+
+async function sessionEncryptionKey(env: Env): Promise<CryptoKey> {
+  if (!env.SESSION_ENCRYPTION_KEY) throw new ApiError(500, 'SESSION_ENCRYPTION_KEY 설정이 필요합니다.');
+  const keyBytes = await crypto.subtle.digest('SHA-256', textEncoder.encode(env.SESSION_ENCRYPTION_KEY));
+  return crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
+}
+
+function decodeBase64(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+function copyBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+async function encryptSessionValue(env: Env, value: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: copyBuffer(iv) },
+    await sessionEncryptionKey(env),
+    textEncoder.encode(value),
+  );
+  return `${encodeBase64(iv)}.${encodeBase64(new Uint8Array(encrypted))}`;
+}
+
+async function decryptSessionValue(env: Env, value: string): Promise<string> {
+  const [encodedIv, encodedCiphertext] = value.split('.');
+  if (!encodedIv || !encodedCiphertext) throw new ApiError(401, '로그인 세션을 복호화할 수 없습니다.');
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: copyBuffer(decodeBase64(encodedIv)) },
+      await sessionEncryptionKey(env),
+      copyBuffer(decodeBase64(encodedCiphertext)),
+    );
+    return textDecoder.decode(decrypted);
+  } catch {
+    throw new ApiError(401, '로그인 세션을 복호화할 수 없습니다.');
+  }
+}
+
+function createSessionToken(): string {
+  return `ms_${toHex(crypto.getRandomValues(new Uint8Array(32)))}`;
 }
 
 function withCors(response: Response, origin: string | null): Response {
@@ -42,8 +123,8 @@ function withCors(response: Response, origin: string | null): Response {
   headers.set('Vary', 'Origin');
   if (origin) {
     headers.set('Access-Control-Allow-Origin', origin);
-    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Requested-With');
     headers.set('Access-Control-Max-Age', '600');
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
@@ -53,10 +134,82 @@ function allowedOrigins(env: Env): Set<string> {
   return new Set(env.APP_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean));
 }
 
-async function authenticate(request: Request): Promise<GooglePrincipal> {
+async function refreshSessionAccessToken(env: Env, session: AuthSessionRow): Promise<string> {
+  const refreshToken = await decryptSessionValue(env, session.refreshTokenCiphertext);
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  });
+  if (!response.ok) {
+    const tokenError = await response.json().catch(() => ({})) as { error?: string };
+    if (response.status === 400 && tokenError.error === 'invalid_grant') {
+      await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(session.tokenHash).run();
+      throw new ApiError(401, 'Google 로그인 세션이 만료되었습니다. 다시 로그인해 주세요.');
+    }
+    throw new ApiError(502, 'Google 로그인 세션을 갱신하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+  }
+  const tokenResult = await response.json() as { access_token?: string; expires_in?: number };
+  if (!tokenResult.access_token || !Number.isFinite(Number(tokenResult.expires_in))) {
+    throw new ApiError(502, 'Google에서 새 로그인 토큰을 받지 못했습니다.');
+  }
+  const accessTokenCiphertext = await encryptSessionValue(env, tokenResult.access_token);
+  const accessTokenExpiresAt = Date.now() + Number(tokenResult.expires_in) * 1000;
+  await env.DB.prepare(`
+    UPDATE auth_sessions
+    SET access_token_ciphertext = ?, access_token_expires_at = ?
+    WHERE token_hash = ?
+  `).bind(accessTokenCiphertext, accessTokenExpiresAt, session.tokenHash).run();
+  return tokenResult.access_token;
+}
+
+async function authenticateSession(env: Env, token: string): Promise<GooglePrincipal> {
+  if (!/^ms_[a-f0-9]{64}$/.test(token)) throw new ApiError(401, '로그인 세션이 올바르지 않습니다.');
+  const tokenHash = await sha256(token);
+  const session = await env.DB.prepare(`
+    SELECT token_hash AS tokenHash, google_sub AS sub, email, name,
+      refresh_token_ciphertext AS refreshTokenCiphertext,
+      access_token_ciphertext AS accessTokenCiphertext,
+      access_token_expires_at AS accessTokenExpiresAt, expires_at AS expiresAt, remember
+    FROM auth_sessions WHERE token_hash = ?
+  `).bind(tokenHash).first<AuthSessionRow>();
+  if (!session || session.expiresAt <= Date.now()) {
+    if (session) await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(tokenHash).run();
+    throw new ApiError(401, '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.');
+  }
+  if (session.expiresAt - Date.now() < 7 * 24 * 60 * 60 * 1000) {
+    const renewedExpiry = Date.now() + (session.remember ? sessionLifetimeMs : 12 * 60 * 60 * 1000);
+    await env.DB.prepare('UPDATE auth_sessions SET expires_at = ? WHERE token_hash = ?')
+      .bind(renewedExpiry, tokenHash).run();
+    session.expiresAt = renewedExpiry;
+  }
+  const accessToken = session.accessTokenExpiresAt > Date.now() + 60_000
+    ? await decryptSessionValue(env, session.accessTokenCiphertext)
+    : await refreshSessionAccessToken(env, session);
+  const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) {
+    if (response.status === 401) throw new ApiError(401, 'Google 계정을 확인할 수 없습니다. 다시 로그인해 주세요.');
+    throw new ApiError(502, 'Google 계정을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.');
+  }
+  const profile = await response.json() as GoogleUserInfo;
+  if (profile.sub !== session.sub || profile.email_verified !== true) {
+    throw new ApiError(401, '저장된 로그인 세션의 Google 계정이 일치하지 않습니다.');
+  }
+  return { sub: session.sub, email: session.email, name: session.name };
+}
+
+async function authenticate(request: Request, env: Env): Promise<GooglePrincipal> {
   const authorization = request.headers.get('Authorization') || '';
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
   if (!token) throw new ApiError(401, 'Google 로그인이 필요합니다.');
+  if (token.startsWith('ms_')) return authenticateSession(env, token);
   const response = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -65,7 +218,7 @@ async function authenticate(request: Request): Promise<GooglePrincipal> {
   if (!profile.sub || !profile.email || profile.email_verified !== true) {
     throw new ApiError(401, 'Google 계정의 인증 상태를 확인할 수 없습니다.');
   }
-  return { sub: profile.sub, email: profile.email.toLowerCase() };
+  return { sub: profile.sub, email: profile.email.toLowerCase(), name: profile.name };
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
@@ -279,16 +432,42 @@ async function createGroup(env: Env, principal: GooglePrincipal, body: Record<st
     env.DB.prepare(`INSERT INTO group_members (group_id, email, role, joined_at) VALUES (?, ?, 'admin', ?)`)
       .bind(groupId, principal.email, now),
   ]);
-  return json({ id: groupId, name }, 201);
+  return json({ id: groupId, name, mainImageBossId: null }, 201);
 }
 
 async function listGroups(env: Env, principal: GooglePrincipal): Promise<Response> {
   const result = await env.DB.prepare(`
-    SELECT g.id, g.name, m.role
+    SELECT g.id, g.name, g.main_image_boss_id AS mainImageBossId, m.role
     FROM groups g JOIN group_members m ON m.group_id = g.id
     WHERE lower(m.email) = lower(?) ORDER BY g.created_at DESC
   `).bind(principal.email).all();
   return json({ groups: result.results || [] });
+}
+
+async function updateGroup(
+  env: Env,
+  groupId: string,
+  principal: GooglePrincipal,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  await requireGroupAdmin(env, groupId, principal);
+  if (Object.keys(body).some((key) => key !== 'mainImageBossId')) {
+    throw new ApiError(400, '그룹 이미지 설정 형식이 올바르지 않습니다.');
+  }
+  let mainImageBossId: string | null = null;
+  if (body.mainImageBossId !== null) {
+    mainImageBossId = stringField(body, 'mainImageBossId', 80);
+    if (!bossIdPattern.test(mainImageBossId)) throw new ApiError(400, '그룹 이미지 ID 형식이 올바르지 않습니다.');
+  }
+  await env.DB.prepare('UPDATE groups SET main_image_boss_id = ? WHERE id = ?')
+    .bind(mainImageBossId, groupId).run();
+  return json({ id: groupId, mainImageBossId });
+}
+
+async function deleteGroup(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
+  await requireGroupAdmin(env, groupId, principal);
+  await env.DB.prepare('DELETE FROM groups WHERE id = ?').bind(groupId).run();
+  return json({ id: groupId, deleted: true });
 }
 
 async function listCharacters(env: Env, principal: GooglePrincipal): Promise<Response> {
@@ -315,6 +494,17 @@ async function listCharacters(env: Env, principal: GooglePrincipal): Promise<Res
     scheduler: JSON.parse(schedulerJson),
   }));
   return json({ characters });
+}
+
+async function listCharacterMultipliers(env: Env, principal: GooglePrincipal): Promise<Response> {
+  const result = await env.DB.prepare(`
+    SELECT google_sub AS ownerSub, nickname, boss_id AS bossId,
+      CAST(multiplier AS TEXT) AS multiplier, updated_at AS updatedAt, updated_by AS updatedBy
+    FROM character_multipliers
+    WHERE google_sub = ?
+    ORDER BY nickname COLLATE NOCASE, boss_id
+  `).bind(principal.sub).all();
+  return json({ multipliers: result.results || [] });
 }
 
 async function getCharacterSelection(env: Env, principal: GooglePrincipal): Promise<Response> {
@@ -400,9 +590,12 @@ async function listBosses(env: Env, groupId: string, principal: GooglePrincipal)
 async function listMultipliers(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
   const group = await getGroup(env, groupId, principal.email);
   const result = await env.DB.prepare(`
-    SELECT nickname, boss_id AS bossId, CAST(multiplier AS TEXT) AS multiplier,
-      updated_at AS updatedAt, updated_by AS updatedBy
-    FROM multipliers WHERE group_id = ? ORDER BY nickname COLLATE NOCASE, boss_id
+    SELECT cm.google_sub AS ownerSub, cm.nickname, cm.boss_id AS bossId,
+      CAST(cm.multiplier AS TEXT) AS multiplier, cm.updated_at AS updatedAt, cm.updated_by AS updatedBy
+    FROM group_characters gc
+    JOIN character_multipliers cm
+      ON cm.google_sub = gc.google_sub AND lower(cm.nickname) = lower(gc.nickname)
+    WHERE gc.group_id = ? ORDER BY cm.nickname COLLATE NOCASE, cm.boss_id
   `).bind(group.id).all();
   return json({ multipliers: result.results || [] });
 }
@@ -502,8 +695,8 @@ async function listGroupParties(env: Env, groupId: string, principal: GooglePrin
     LEFT JOIN group_characters gc
       ON gc.group_id = p.group_id AND gc.google_sub = p.google_sub AND lower(gc.nickname) = lower(p.nickname)
     LEFT JOIN characters c ON c.google_sub = p.google_sub AND lower(c.nickname) = lower(p.nickname)
-    LEFT JOIN multipliers m
-      ON m.group_id = bp.group_id AND lower(m.nickname) = lower(p.nickname) AND m.boss_id = bp.boss_id
+    LEFT JOIN character_multipliers m
+      ON m.google_sub = p.google_sub AND lower(m.nickname) = lower(p.nickname) AND m.boss_id = bp.boss_id
     WHERE bp.group_id = ?
     ORDER BY bp.created_at, c.character_level DESC, c.nickname COLLATE NOCASE
   `).bind(group.id).all<{
@@ -731,7 +924,7 @@ async function importMapleScouterData(
   principal: GooglePrincipal,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  const allowedFields = new Set(['nickname', 'boss380HexaScore', 'multipliers', 'groupId']);
+  const allowedFields = new Set(['nickname', 'boss380HexaScore', 'multipliers']);
   if (Object.keys(body).some((key) => !allowedFields.has(key))) {
     throw new ApiError(400, 'MapleScouter 가져오기 요청 항목을 확인해 주세요.');
   }
@@ -767,39 +960,27 @@ async function importMapleScouterData(
     return { bossId, multiplier };
   });
 
-  let groupId: string | null = null;
-  if (body.groupId !== undefined && body.groupId !== null && body.groupId !== '') {
-    if (typeof body.groupId !== 'string') throw new ApiError(400, 'groupId 형식이 올바르지 않습니다.');
-    groupId = stringField(body, 'groupId', 80);
-  }
-  if (importedMultipliers.length && !groupId) {
-    throw new ApiError(400, '보스 배율을 저장할 그룹을 선택해 주세요.');
-  }
-
   const character = await env.DB.prepare(`
     SELECT nickname FROM characters WHERE google_sub = ? AND lower(nickname) = lower(?)
   `).bind(principal.sub, nickname).first<{ nickname: string }>();
   if (!character) throw new ApiError(403, '이 Google 계정으로 인증한 캐릭터가 아닙니다.');
 
-  let acceptedMultipliers = importedMultipliers;
-  if (groupId) {
-    await getGroup(env, groupId, principal.email);
-  }
+  const acceptedMultipliers = importedMultipliers;
 
   const updatedAt = new Date().toISOString();
   const statements = [env.DB.prepare(`
     UPDATE characters SET boss380_hexa_score = ?
     WHERE google_sub = ? AND lower(nickname) = lower(?)
   `).bind(boss380HexaScore, principal.sub, character.nickname)];
-  if (groupId && acceptedMultipliers.length) {
+  if (acceptedMultipliers.length) {
     statements.push(...acceptedMultipliers.map(({ bossId, multiplier }) => env.DB.prepare(`
-      INSERT INTO multipliers (group_id, nickname, boss_id, multiplier, updated_at, updated_by)
+      INSERT INTO character_multipliers (google_sub, nickname, boss_id, multiplier, updated_at, updated_by)
       VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (group_id, nickname, boss_id) DO UPDATE SET
+      ON CONFLICT (google_sub, nickname, boss_id) DO UPDATE SET
         multiplier = excluded.multiplier,
         updated_at = excluded.updated_at,
         updated_by = excluded.updated_by
-    `).bind(groupId, character.nickname, bossId, multiplier, updatedAt, principal.email)));
+    `).bind(principal.sub, character.nickname, bossId, multiplier, updatedAt, principal.email)));
   }
   await env.DB.batch(statements);
 
@@ -812,18 +993,118 @@ async function importMapleScouterData(
   });
 }
 
+async function createGoogleSession(env: Env, origin: string, body: Record<string, unknown>): Promise<Response> {
+  if (Object.keys(body).some((key) => !['code', 'remember'].includes(key))
+    || typeof body.remember !== 'boolean') {
+    throw new ApiError(400, 'code와 remember 값을 확인해 주세요.');
+  }
+  const code = stringField(body, 'code', 4096);
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw new ApiError(500, 'Google OAuth Worker 설정이 필요합니다.');
+  }
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: origin,
+    }),
+  });
+  if (!tokenResponse.ok) throw new ApiError(401, 'Google 로그인 코드를 확인할 수 없습니다. 다시 로그인해 주세요.');
+  const tokens = await tokenResponse.json() as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  if (!tokens.access_token || !Number.isFinite(Number(tokens.expires_in))) {
+    throw new ApiError(502, 'Google에서 로그인 토큰을 받지 못했습니다.');
+  }
+  const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+    headers: { Authorization: `Bearer ${tokens.access_token}` },
+  });
+  if (!profileResponse.ok) throw new ApiError(401, 'Google 계정 정보를 확인할 수 없습니다.');
+  const profile = await profileResponse.json() as GoogleUserInfo;
+  if (!profile.sub || !profile.email || profile.email_verified !== true) {
+    throw new ApiError(401, 'Google 계정의 인증 상태를 확인할 수 없습니다.');
+  }
+  let refreshToken = tokens.refresh_token || '';
+  if (!refreshToken) {
+    const previousSession = await env.DB.prepare(`
+      SELECT refresh_token_ciphertext AS refreshTokenCiphertext
+      FROM auth_sessions WHERE google_sub = ? ORDER BY created_at DESC LIMIT 1
+    `).bind(profile.sub).first<{ refreshTokenCiphertext: string }>();
+    if (previousSession) refreshToken = await decryptSessionValue(env, previousSession.refreshTokenCiphertext);
+  }
+  if (!refreshToken) {
+    throw new ApiError(401, 'Google이 장기 로그인 권한을 제공하지 않았습니다. 다시 로그인해 주세요.');
+  }
+
+  const sessionToken = createSessionToken();
+  const tokenHash = await sha256(sessionToken);
+  const now = Date.now();
+  await env.DB.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').bind(now).run();
+  await env.DB.prepare(`
+    INSERT INTO auth_sessions (
+      token_hash, google_sub, email, name, refresh_token_ciphertext,
+      access_token_ciphertext, access_token_expires_at, expires_at, created_at, remember
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    tokenHash,
+    profile.sub,
+    profile.email.toLowerCase(),
+    profile.name || '',
+    await encryptSessionValue(env, refreshToken),
+    await encryptSessionValue(env, tokens.access_token),
+    now + Number(tokens.expires_in) * 1000,
+    now + (body.remember ? sessionLifetimeMs : 12 * 60 * 60 * 1000),
+    now,
+    body.remember ? 1 : 0,
+  ).run();
+  return json({
+    sessionToken,
+    account: { sub: profile.sub, email: profile.email.toLowerCase(), name: profile.name || '' },
+  }, 201);
+}
+
+async function revokeGoogleSession(request: Request, env: Env): Promise<Response> {
+  const authorization = request.headers.get('Authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (!/^ms_[a-f0-9]{64}$/.test(token)) throw new ApiError(401, '로그인 세션이 필요합니다.');
+  await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+  return json({ loggedOut: true });
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname.split('/').filter(Boolean);
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true });
   if (path[0] !== 'api') throw new ApiError(404, '요청한 API를 찾을 수 없습니다.');
+  if (request.method === 'POST' && path.length === 3 && path[1] === 'auth' && path[2] === 'google') {
+    const origin = request.headers.get('Origin');
+    if (!origin || request.headers.get('X-Requested-With') !== 'XMLHttpRequest') {
+      throw new ApiError(403, 'Google 로그인 요청 출처를 확인할 수 없습니다.');
+    }
+    return createGoogleSession(env, origin, await readBody(request));
+  }
+  if (request.method === 'DELETE' && path.length === 3 && path[1] === 'auth' && path[2] === 'session') {
+    return revokeGoogleSession(request, env);
+  }
 
-  const principal = await authenticate(request);
+  const principal = await authenticate(request, env);
+  if (request.method === 'GET' && path.length === 3 && path[1] === 'auth' && path[2] === 'session') {
+    return json({ account: principal });
+  }
   if (request.method === 'POST' && path.length === 3 && path[1] === 'group-invites' && path[2] === 'accept') {
     return acceptGroupInvite(env, principal, await readBody(request));
   }
   if (request.method === 'GET' && path.length === 2 && path[1] === 'groups') return listGroups(env, principal);
   if (request.method === 'GET' && path.length === 2 && path[1] === 'characters') return listCharacters(env, principal);
+  if (request.method === 'GET' && path.length === 3 && path[1] === 'characters' && path[2] === 'multipliers') {
+    return listCharacterMultipliers(env, principal);
+  }
   if (request.method === 'GET' && path.length === 3 && path[1] === 'characters' && path[2] === 'selection') {
     return getCharacterSelection(env, principal);
   }
@@ -844,6 +1125,12 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (path.length >= 3 && path[1] === 'groups') {
     const groupId = path[2];
+    if (path.length === 3 && request.method === 'PATCH') {
+      return updateGroup(env, groupId, principal, await readBody(request));
+    }
+    if (path.length === 3 && request.method === 'DELETE') {
+      return deleteGroup(env, groupId, principal);
+    }
     if (path.length === 4 && path[3] === 'invites' && request.method === 'POST') {
       return createGroupInvite(env, groupId, principal);
     }

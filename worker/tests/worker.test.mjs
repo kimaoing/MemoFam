@@ -28,10 +28,143 @@ test('rejects an unlisted browser origin before authentication', async () => {
   assert.deepEqual(await response.json(), { error: '허용되지 않은 웹 출처입니다.' });
 });
 
+test('allows cross-origin group settings requests through CORS preflight', async () => {
+  const response = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://app.example.test',
+      'Access-Control-Request-Method': 'PATCH',
+    },
+  }), env);
+  assert.equal(response.status, 204);
+  assert.match(response.headers.get('Access-Control-Allow-Methods'), /PATCH/);
+});
+
 test('requires a Google access token for protected routes', async () => {
   const response = await worker.fetch(new Request('https://worker.example.test/api/groups'), env);
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: 'Google 로그인이 필요합니다.' });
+});
+
+test('exchanges Google authorization codes for encrypted, refreshable server sessions', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const storedSessions = new Map();
+  const executedQueries = [];
+  env.GOOGLE_CLIENT_ID = 'test-client-id';
+  env.GOOGLE_CLIENT_SECRET = 'test-client-secret';
+  env.SESSION_ENCRYPTION_KEY = 'test-encryption-key-long-enough-for-tests';
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => {
+        if (query.includes('FROM auth_sessions')) {
+          if (query.includes('WHERE google_sub = ?')) return null;
+          return storedSessions.get(values[0]) || null;
+        }
+        return null;
+      },
+      run: async () => {
+        executedQueries.push(query);
+        if (query.includes('INSERT INTO auth_sessions')) {
+          const [tokenHash, sub, email, name, refreshCipher, accessCipher, accessExpires, expiresAt, createdAt, remember] = values;
+          storedSessions.set(tokenHash, {
+            tokenHash,
+            sub,
+            email,
+            name,
+            refreshTokenCiphertext: refreshCipher,
+            accessTokenCiphertext: accessCipher,
+            accessTokenExpiresAt: accessExpires,
+            expiresAt,
+            createdAt,
+            remember,
+          });
+        } else if (query.includes('UPDATE auth_sessions')) {
+          const [accessCipher, accessExpires, tokenHash] = values;
+          const session = storedSessions.get(tokenHash);
+          storedSessions.set(tokenHash, {
+            ...session,
+            accessTokenCiphertext: accessCipher,
+            accessTokenExpiresAt: accessExpires,
+          });
+        } else if (query.includes('DELETE FROM auth_sessions')) {
+          storedSessions.delete(values[0]);
+        }
+        return { success: true };
+      },
+    }),
+  });
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === 'https://oauth2.googleapis.com/token') {
+      const requestBody = new URLSearchParams(init.body);
+      if (requestBody.get('grant_type') === 'authorization_code') {
+        assert.equal(requestBody.get('redirect_uri'), 'https://app.example.test');
+        return Response.json({
+          access_token: 'refreshed-google-access-token',
+          refresh_token: 'google-refresh-token',
+          expires_in: 0,
+        });
+      }
+      assert.equal(requestBody.get('refresh_token'), 'google-refresh-token');
+      return Response.json({ access_token: 'refreshed-google-access-token', expires_in: 3600 });
+    }
+    if (url === 'https://openidconnect.googleapis.com/v1/userinfo') {
+      assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer refreshed-google-access-token');
+      return Response.json({
+        sub: 'google-subject',
+        email: 'member@example.test',
+        email_verified: true,
+        name: 'Member',
+      });
+    }
+    throw new Error(`Unexpected test request: ${url}`);
+  };
+
+  try {
+    const loginResponse = await worker.fetch(new Request('https://worker.example.test/api/auth/google', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://app.example.test',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ code: 'one-time-code', remember: true }),
+    }), env);
+    assert.equal(loginResponse.status, 201, await loginResponse.clone().text());
+    const login = await loginResponse.json();
+    assert.match(login.sessionToken, /^ms_[a-f0-9]{64}$/);
+    assert.deepEqual(login.account, {
+      sub: 'google-subject',
+      email: 'member@example.test',
+      name: 'Member',
+    });
+    assert.equal(storedSessions.size, 1);
+    const [session] = [...storedSessions.values()];
+    assert.notEqual(session.refreshTokenCiphertext, 'google-refresh-token');
+    assert.equal(session.remember, 1);
+
+    const sessionResponse = await worker.fetch(new Request('https://worker.example.test/api/auth/session', {
+      headers: { Authorization: `Bearer ${login.sessionToken}` },
+    }), env);
+    assert.equal(sessionResponse.status, 200);
+    assert.deepEqual((await sessionResponse.json()).account, login.account);
+    assert.ok(executedQueries.some((query) => query.includes('UPDATE auth_sessions')));
+    assert.notEqual(session.accessTokenCiphertext, 'refreshed-google-access-token');
+
+    const logoutResponse = await worker.fetch(new Request('https://worker.example.test/api/auth/session', {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${login.sessionToken}` },
+    }), env);
+    assert.equal(logoutResponse.status, 200);
+    assert.equal(storedSessions.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+    delete env.GOOGLE_CLIENT_ID;
+    delete env.GOOGLE_CLIENT_SECRET;
+    delete env.SESSION_ENCRYPTION_KEY;
+  }
 });
 
 test('rejects expired or invalid Google access tokens', async () => {
@@ -113,7 +246,7 @@ test('persists active character selection per Google account and rejects unowned
   }
 });
 
-test('imports browser-captured scores and every valid boss multiplier for a group member', async () => {
+test('imports browser-captured scores and boss multipliers to the owned character', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;
   const originalBatch = env.DB.batch;
@@ -153,7 +286,6 @@ test('imports browser-captured scores and every valid boss multiplier for a grou
     const response = await importRequest({
       nickname: '오잉느',
       boss380HexaScore: 67619,
-      groupId: 'group-1',
       multipliers: [
         { bossId: 'hard_kaling', multiplier: 25.5 },
         { bossId: 'normal_kaling', multiplier: 40 },
@@ -177,9 +309,17 @@ test('imports browser-captured scores and every valid boss multiplier for a grou
     assert.equal(batches[0].length, 3);
     assert.equal(batches[0][0].query.includes('UPDATE characters'), true);
     assert.deepEqual(batches[0][0].values, [67619, 'google-subject', '오잉느']);
-    assert.equal(batches[0][1].query.includes('INSERT INTO multipliers'), true);
-    assert.deepEqual(batches[0][1].values.slice(0, 4), ['group-1', '오잉느', 'hard_kaling', 25.5]);
-    assert.deepEqual(batches[0][2].values.slice(0, 4), ['group-1', '오잉느', 'normal_kaling', 40]);
+    assert.equal(batches[0][1].query.includes('INSERT INTO character_multipliers'), true);
+    assert.deepEqual(batches[0][1].values.slice(0, 4), ['google-subject', '오잉느', 'hard_kaling', 25.5]);
+    assert.deepEqual(batches[0][2].values.slice(0, 4), ['google-subject', '오잉느', 'normal_kaling', 40]);
+
+    const groupScopedResponse = await importRequest({
+      nickname: '오잉느',
+      boss380HexaScore: 67619,
+      groupId: 'group-1',
+      multipliers: [{ bossId: 'hard_kaling', multiplier: 25.5 }],
+    });
+    assert.equal(groupScopedResponse.status, 400);
 
     characterRow = null;
     const unownedResponse = await importRequest({ nickname: '타인캐릭터', boss380HexaScore: 67619 });
@@ -189,7 +329,6 @@ test('imports browser-captured scores and every valid boss multiplier for a grou
     const invalidResponse = await importRequest({
       nickname: '오잉느',
       boss380HexaScore: 67619,
-      groupId: 'group-1',
       multipliers: [{ bossId: 'hard_kaling', multiplier: 1001 }],
     });
     assert.equal(invalidResponse.status, 400);
@@ -198,6 +337,52 @@ test('imports browser-captured scores and every valid boss multiplier for a grou
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;
     env.DB.batch = originalBatch;
+  }
+});
+
+test('lists multipliers owned by the authenticated character account', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  let query;
+  let boundValues;
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject',
+    email: 'member@example.test',
+    email_verified: true,
+  });
+  env.DB.prepare = (statement) => ({
+    bind: (...values) => {
+      query = statement;
+      boundValues = values;
+      return {
+        all: async () => ({ results: [{
+          ownerSub: 'google-subject',
+          nickname: '오잉느',
+          bossId: 'hard_kaling',
+          multiplier: '25.5',
+        }] }),
+      };
+    },
+  });
+
+  try {
+    const response = await worker.fetch(new Request('https://worker.example.test/api/characters/multipliers', {
+      headers: { Authorization: 'Bearer test-token' },
+    }), env);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      multipliers: [{
+        ownerSub: 'google-subject',
+        nickname: '오잉느',
+        bossId: 'hard_kaling',
+        multiplier: '25.5',
+      }],
+    });
+    assert.match(query, /FROM character_multipliers/);
+    assert.deepEqual(boundValues, ['google-subject']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
   }
 });
 
@@ -217,6 +402,65 @@ test('retires server-side multiplier scraping in favor of browser import', async
     }), env);
     assert.equal(response.status, 410);
     assert.deepEqual(await response.json(), { error: '보스 배율은 로그인 앱의 브라우저 가져오기로 저장해 주세요.' });
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+  }
+});
+
+test('allows only group admins to change the sidebar image or delete the group', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const statements = [];
+  let role = 'admin';
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject',
+    email: 'member@example.test',
+    email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM groups g JOIN group_members')
+        ? {
+          id: 'group-1',
+          name: 'Test group',
+          created_by_sub: 'google-subject',
+          created_by_email: 'member@example.test',
+          role,
+        }
+        : null,
+      run: async () => {
+        statements.push({ query, values });
+        return { success: true };
+      },
+    }),
+  });
+
+  try {
+    const patchResponse = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1', {
+      method: 'PATCH',
+      headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mainImageBossId: 'extreme_kalos' }),
+    }), env);
+    assert.equal(patchResponse.status, 200);
+    assert.deepEqual(await patchResponse.json(), { id: 'group-1', mainImageBossId: 'extreme_kalos' });
+    assert.deepEqual(statements[0].values, ['extreme_kalos', 'group-1']);
+
+    const deleteResponse = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer test-token' },
+    }), env);
+    assert.equal(deleteResponse.status, 200);
+    assert.deepEqual(await deleteResponse.json(), { id: 'group-1', deleted: true });
+    assert.equal(statements[1].query, 'DELETE FROM groups WHERE id = ?');
+
+    role = 'member';
+    const forbiddenResponse = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer test-token' },
+    }), env);
+    assert.equal(forbiddenResponse.status, 403);
+    assert.equal(statements.length, 2);
   } finally {
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;

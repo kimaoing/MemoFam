@@ -656,6 +656,76 @@ test('creates multiple parties for one boss and returns member multipliers and s
   }
 });
 
+test('commits a group party draft in one batch and protects duplicate and foreign assignments', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const originalBatch = env.DB.batch;
+  let role = 'admin';
+  let participants = [{ partyId: 'party-1', ownerSub: 'google-subject', nickname: '오잉느' }];
+  const batches = [];
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: 'member@example.test', email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM groups g JOIN group_members')
+        ? { id: 'group-1', name: 'Test group', created_by_sub: 'google-subject', created_by_email: 'member@example.test', role }
+        : null,
+      all: async () => {
+        if (query.includes('FROM group_boss_parties WHERE group_id')) {
+          return { results: [{ partyId: 'party-1', bossId: 'chaos_kalos', familyId: 'kalos' }] };
+        }
+        if (query.includes('FROM group_characters gc JOIN characters')) {
+          return { results: [
+            { ownerSub: 'google-subject', nickname: '오잉느', ocid: 'ocid-1' },
+            { ownerSub: 'google-subject', nickname: '부캐', ocid: 'ocid-2' },
+          ] };
+        }
+        if (query.includes('FROM group_boss_participants WHERE group_id')) return { results: participants };
+        return { results: [] };
+      },
+      query,
+      values,
+    }),
+  });
+  env.DB.batch = async (statements) => { batches.push(statements); };
+  const commit = (parties) => worker.fetch(new Request('https://worker.example.test/api/groups/group-1/parties/commit', {
+    method: 'PUT',
+    headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parties }),
+  }), env);
+  try {
+    const validResponse = await commit([{ partyId: 'party-1', bossId: 'chaos_kalos', members: [{ ocid: 'ocid-2' }] }]);
+    assert.equal(validResponse.status, 200);
+    assert.deepEqual(await validResponse.json(), { saved: true, partyCount: 1 });
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0][0].query, 'DELETE FROM group_boss_participants WHERE group_id = ?');
+    assert.equal(batches[0].some(({ query }) => query.includes('INSERT INTO group_boss_participants')), true);
+
+    const duplicateResponse = await commit([{
+      partyId: 'party-1',
+      bossId: 'chaos_kalos',
+      members: [{ ocid: 'ocid-1' }, { ocid: 'ocid-2' }],
+    }]);
+    assert.equal(duplicateResponse.status, 400);
+    assert.equal(batches.length, 1);
+
+    role = 'member';
+    participants = [{ partyId: 'party-1', ownerSub: 'other-subject', nickname: '팀원' }];
+    const foreignEditResponse = await commit([{
+      partyId: 'party-1',
+      bossId: 'chaos_kalos',
+      members: [{ ocid: 'ocid-1' }],
+    }]);
+    assert.equal(foreignEditResponse.status, 403);
+    assert.equal(batches.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+    env.DB.batch = originalBatch;
+  }
+});
+
 test('caps weekly bosses at twelve, excludes monthly bosses, and allows family difficulty changes', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;

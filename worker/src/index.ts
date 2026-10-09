@@ -803,6 +803,135 @@ async function createGroupParty(
   return json({ partyId, bossId, familyId, created: true }, 201);
 }
 
+async function commitGroupPartyDraft(
+  env: Env,
+  groupId: string,
+  principal: GooglePrincipal,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  if (Object.keys(body).some((key) => key !== 'parties')
+    || !Array.isArray(body.parties)
+    || body.parties.length > 100) {
+    throw new ApiError(400, '파티 편성 목록 형식이 올바르지 않습니다.');
+  }
+
+  const [existingPartyResult, characterResult, participantResult] = await Promise.all([
+    env.DB.prepare(`
+      SELECT id AS partyId, boss_id AS bossId, family_id AS familyId
+      FROM group_boss_parties WHERE group_id = ?
+    `).bind(group.id).all<{ partyId: string; bossId: string; familyId: string }>(),
+    env.DB.prepare(`
+      SELECT gc.google_sub AS ownerSub, gc.nickname, c.ocid
+      FROM group_characters gc JOIN characters c
+        ON c.google_sub = gc.google_sub AND lower(c.nickname) = lower(gc.nickname)
+      WHERE gc.group_id = ?
+    `).bind(group.id).all<{ ownerSub: string; nickname: string; ocid: string }>(),
+    env.DB.prepare(`
+      SELECT party_id AS partyId, google_sub AS ownerSub, nickname
+      FROM group_boss_participants WHERE group_id = ?
+    `).bind(group.id).all<{ partyId: string; ownerSub: string; nickname: string }>(),
+  ]);
+
+  const existingParties = new Map((existingPartyResult.results || []).map((party) => [party.partyId, party]));
+  const charactersByOcid = new Map((characterResult.results || []).map((character) => [character.ocid, character]));
+  const currentPartyIds = new Set<string>();
+  const draftParties: Array<{
+    partyId: string;
+    bossId: string;
+    familyId: string;
+    members: Array<{ ownerSub: string; nickname: string }>;
+  }> = [];
+  const uniquePartyAssignments = new Set<string>();
+  const uniqueOwnerAssignments = new Set<string>();
+
+  for (const rawParty of body.parties) {
+    if (!rawParty || typeof rawParty !== 'object' || Array.isArray(rawParty)) {
+      throw new ApiError(400, '파티 항목 형식이 올바르지 않습니다.');
+    }
+    const party = rawParty as Record<string, unknown>;
+    if (Object.keys(party).some((key) => !['partyId', 'bossId', 'members'].includes(key))
+      || !Array.isArray(party.members)
+      || party.members.length > 12) {
+      throw new ApiError(400, '파티 ID, 보스, 캐릭터 목록을 확인해 주세요.');
+    }
+    const partyId = stringField(party, 'partyId', 80);
+    const bossId = stringField(party, 'bossId', 80);
+    if (!bossIdPattern.test(bossId)) throw new ApiError(400, 'bossId 형식이 올바르지 않습니다.');
+    if (currentPartyIds.has(partyId)) throw new ApiError(400, '중복된 파티 ID가 있습니다.');
+    currentPartyIds.add(partyId);
+    const familyId = bossFamilyId(bossId);
+    const existingParty = existingParties.get(partyId);
+    if (existingParty && (existingParty.bossId !== bossId || existingParty.familyId !== familyId)) {
+      throw new ApiError(400, '기존 파티의 보스 정보는 변경할 수 없습니다.');
+    }
+
+    const members: Array<{ ownerSub: string; nickname: string }> = [];
+    for (const rawMember of party.members) {
+      if (!rawMember || typeof rawMember !== 'object' || Array.isArray(rawMember)) {
+        throw new ApiError(400, '파티 캐릭터 항목 형식이 올바르지 않습니다.');
+      }
+      const member = rawMember as Record<string, unknown>;
+      if (Object.keys(member).some((key) => key !== 'ocid')) {
+        throw new ApiError(400, '파티 캐릭터는 ocid만 포함할 수 있습니다.');
+      }
+      const ocid = stringField(member, 'ocid', 80);
+      const character = charactersByOcid.get(ocid);
+      if (!character) throw new ApiError(400, '그룹에 등록되지 않은 캐릭터가 포함되어 있습니다.');
+      const assignmentKey = `${familyId}:${character.ownerSub}:${character.nickname.toLowerCase()}`;
+      if (uniquePartyAssignments.has(assignmentKey)) {
+        throw new ApiError(400, '같은 캐릭터는 보스별로 파티 하나에만 편성할 수 있습니다.');
+      }
+      uniquePartyAssignments.add(assignmentKey);
+      const ownerPartyKey = `${partyId}:${character.ownerSub}`;
+      if (uniqueOwnerAssignments.has(ownerPartyKey)) {
+        throw new ApiError(400, '한 파티에는 같은 계정의 캐릭터를 한 명만 편성할 수 있습니다.');
+      }
+      uniqueOwnerAssignments.add(ownerPartyKey);
+      members.push({ ownerSub: character.ownerSub, nickname: character.nickname });
+    }
+    draftParties.push({ partyId, bossId, familyId, members });
+  }
+
+  for (const existingPartyId of existingParties.keys()) {
+    if (!currentPartyIds.has(existingPartyId)) {
+      throw new ApiError(400, '기존 파티를 모두 포함해 저장해 주세요.');
+    }
+  }
+
+  const currentForeignAssignments = new Set((participantResult.results || [])
+    .filter(({ ownerSub }) => ownerSub !== principal.sub)
+    .map(({ partyId, ownerSub, nickname }) => `${partyId}:${ownerSub}:${nickname.toLowerCase()}`));
+  if (group.role !== 'admin') {
+    const draftForeignAssignments = new Set(draftParties.flatMap(({ partyId, members }) => (
+      members
+        .filter(({ ownerSub }) => ownerSub !== principal.sub)
+        .map(({ ownerSub, nickname }) => `${partyId}:${ownerSub}:${nickname.toLowerCase()}`)
+    )));
+    if (currentForeignAssignments.size !== draftForeignAssignments.size
+      || [...currentForeignAssignments].some((assignment) => !draftForeignAssignments.has(assignment))) {
+      throw new ApiError(403, '본인 캐릭터만 변경할 수 있습니다.');
+    }
+  }
+
+  const createdAt = new Date().toISOString();
+  const statements = [
+    env.DB.prepare('DELETE FROM group_boss_participants WHERE group_id = ?').bind(group.id),
+    ...draftParties
+      .filter(({ partyId }) => !existingParties.has(partyId))
+      .map(({ partyId, bossId, familyId }) => env.DB.prepare(`
+        INSERT INTO group_boss_parties (id, group_id, boss_id, family_id, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(partyId, group.id, bossId, familyId, createdAt)),
+    ...draftParties.flatMap(({ partyId, familyId, members }) => members.map(({ ownerSub, nickname }) => env.DB.prepare(`
+      INSERT INTO group_boss_participants (party_id, group_id, google_sub, nickname, family_id, joined_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(partyId, group.id, ownerSub, nickname, familyId, createdAt))),
+  ];
+  await env.DB.batch(statements);
+  return json({ saved: true, partyCount: draftParties.length });
+}
+
 async function addGroupBossParticipant(
   env: Env,
   groupId: string,
@@ -847,6 +976,14 @@ async function addGroupBossParticipant(
     if (!targetParty) throw new ApiError(404, '그룹 파티를 찾을 수 없습니다.');
     if (targetParty.bossId !== bossId || targetParty.familyId !== familyId) {
       throw new ApiError(400, '파티의 보스가 요청한 보스와 일치하지 않습니다.');
+    }
+    const ownerInTargetParty = await env.DB.prepare(`
+      SELECT nickname
+      FROM group_boss_participants
+      WHERE party_id = ? AND google_sub = ?
+    `).bind(targetPartyId, character.ownerSub).first<{ nickname: string }>();
+    if (ownerInTargetParty && ownerInTargetParty.nickname.toLowerCase() !== character.nickname.toLowerCase()) {
+      throw new ApiError(400, '한 파티에는 같은 계정의 캐릭터를 한 명만 편성할 수 있습니다.');
     }
     createTargetParty = false;
   } else {
@@ -1145,6 +1282,9 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
     if (path.length === 4 && path[3] === 'parties' && request.method === 'POST') {
       return createGroupParty(env, groupId, principal, await readBody(request));
+    }
+    if (path.length === 5 && path[3] === 'parties' && path[4] === 'commit' && request.method === 'PUT') {
+      return commitGroupPartyDraft(env, groupId, principal, await readBody(request));
     }
     if (path.length === 4 && path[3] === 'parties' && request.method === 'GET') {
       return listGroupParties(env, groupId, principal);

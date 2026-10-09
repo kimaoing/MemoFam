@@ -397,7 +397,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   await waitFor(() => expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path === '/api/characters/selection').at(-1).request.ocids)
     .toEqual(['ocid-1', 'ocid-2']));
   fireEvent.click(screen.getByTitle('내 정보'));
-  expect(screen.getByRole('heading', { name: '실사용 캐릭터 2' })).toBeDefined();
+  expect(screen.queryByRole('heading', { name: '실사용 캐릭터 2' })).toBeNull();
   expect(screen.getByRole('searchbox', { name: '캐릭터 검색' })).toBeDefined();
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
@@ -408,7 +408,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .toContain('카오스 감시자 칼로스');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
-    .toContain('2인 파티 추천');
+    .toContain('2인 추천');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .not.toContain('검은 마법사');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning img')).not.toBeNull();
@@ -422,17 +422,6 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(screen.queryByRole('button', { name: /아잉느/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '필터 초기화' }));
 
-  fireEvent.click(screen.getByText('일일 선택 0/1'));
-  expect(screen.queryByText('미완료', { selector: '.schedule-task-option' })).toBeNull();
-  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 일일 일정 일일 퀘스트 표시' }));
-  expect(JSON.parse(window.localStorage.getItem('maple-scout-schedule-preferences:member@example.test')))
-    .toEqual({ 'ocid-1': { daily: ['일일 퀘스트'] } });
-  expect(screen.getByText('일일 퀘스트', { selector: '.task-chip' })).toBeDefined();
-  expect(screen.getByText('에픽 던전 : 하이마운틴', { selector: '.task-chip' })).toBeDefined();
-  expect(screen.queryByText('에픽 던전 : 아우룸 레기스', { selector: '.task-chip' })).toBeNull();
-  fireEvent.click(screen.getByText('주간 선택 1/3'));
-  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 주간 일정 [메이플 유니온] 주간 드래곤 퇴치 표시' }));
-  expect(screen.getByText('[메이플 유니온] 주간 드래곤 퇴치', { selector: '.task-chip' })).toBeDefined();
   fireEvent.click(screen.getAllByText(/^주간 보스 0\/12/)[0]);
   fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 하드 검은 마법사 표시' }));
   fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 카오스 감시자 칼로스 표시' }));
@@ -445,6 +434,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   for (let index = 1; index <= 11; index += 1) {
     fireEvent.click(screen.getByRole('checkbox', { name: `오잉느 보스 일정 노말 테스트 보스 ${index} 표시` }));
   }
+  expect(JSON.parse(window.localStorage.getItem('maple-scout-schedule-preferences:member@example.test')))
+    .toEqual({ 'ocid-1': { bosses: expect.arrayContaining(['blackmage::hard', 'kalos::chaos']) } });
   expect([...document.querySelectorAll('.schedule-boss-picker summary')]
     .map(({ textContent }) => textContent)
     .filter((text) => text.startsWith('주간 보스')))
@@ -452,7 +443,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(screen.getByRole('checkbox', { name: '오잉느 보스 일정 노말 테스트 보스 12 표시' }).disabled).toBe(true);
   const completedBossCard = screen.getByText('검은 마법사', { selector: '.boss-card.completed strong' }).closest('.boss-card');
   expect(completedBossCard.textContent).toContain('하드');
-  expect(completedBossCard.textContent).toContain('완료');
+  expect(completedBossCard.textContent).not.toContain('완료');
   expect(screen.getByText('감시자 칼로스', { selector: '.boss-card.pending strong' }).closest('.boss-card').textContent).toContain('카오스');
 
   fireEvent.click(screen.getByRole('button', { name: /아잉느/ }));
@@ -511,7 +502,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const ownActiveCharacterWrapAfterAssignment = ownActiveCharacterButton.closest('.character-card-wrap');
   await waitFor(() => expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent)
     .not.toContain('카오스 감시자 칼로스'));
-  expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent).toContain('3인 파티 추천');
+  expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent).toContain('3인 추천');
   expect(ownActiveCharacterWrapAfterAssignment.querySelector('.character-party-link').textContent)
     .toContain('Test group · 카오스 감시자 칼로스');
   expect(screen.getByRole('button', { name: '실사용 2명 전체 갱신' })).toBeDefined();

@@ -43,6 +43,10 @@ function bossFamilyOrder(familyId) {
   return index === -1 ? bossRecommendationSettings.highDifficultyOverrides.length : index;
 }
 
+function recommendationPartyLabel(size) {
+  return Number(size) === 1 ? '솔플' : `${size}인`;
+}
+
 function bossImageFor(bossId) {
   const normalizedBossId = String(bossId || '').toLocaleLowerCase('en-US');
   const findImagePath = (imageBossId) => Object.keys(bossImages).find((path) => (
@@ -1590,10 +1594,7 @@ function App() {
                 <>
                   <section className="character-section">
                     <div className="section-heading">
-                      <div>
-                        <p className="eyebrow">MY ACTIVE CHARACTERS</p>
-                        <h2>실사용 캐릭터 <span className="character-count">{activeCharacters.length}</span></h2>
-                      </div>
+                      <div className="section-heading-spacer" aria-hidden="true" />
                       <div className="character-tools">
                         <button
                           className={`outline-button character-score-refresh ${busy === 'maplescouter-refresh' ? 'refreshing' : ''}`}
@@ -1704,7 +1705,7 @@ function App() {
                                                 : <span className="boss-placeholder" aria-hidden="true">◇</span>}
                                               <span>
                                                 <strong>{boss.difficultyLabel} {boss.name}</strong>
-                                                <small>{boss.recommendedPartySize}인 파티 추천 · 배율 {boss.multiplier.toFixed(1)}%</small>
+                                                <small>{recommendationPartyLabel(boss.recommendedPartySize)} 추천 · 배율 {boss.multiplier.toFixed(1)}%</small>
                                               </span>
                                             </span>
                                             {groups.length > 0 && (
@@ -1773,38 +1774,18 @@ function App() {
                             })).values()];
                           const selectedBossKeys = Array.isArray(preferences.bosses)
                             ? limitBossKeysToWeeklyCap(preferences.bosses)
-                            : registeredBossKeys(scheduler.boss_contents || []);
+                            : [];
                           const selectedBosses = availableBosses
                             .filter(({ option }) => selectedBossKeys.includes(option.key))
                             .sort((left, right) => Number(isIncomplete(right.item, true)) - Number(isIncomplete(left.item, true))
                               || bossFamilyOrder(left.option.familyKey) - bossFamilyOrder(right.option.familyKey)
                               || (bossFamilyTopPrice[right.option.familyKey] || 0) - (bossFamilyTopPrice[left.option.familyKey] || 0));
-                          const weeklyBosses = selectedBosses
-                            .filter(({ option }) => option.cycle === 'weekly')
-                            .map(({ item }) => item);
-                          const monthlyBosses = selectedBosses
-                            .filter(({ option }) => option.cycle === 'monthly')
-                            .map(({ item }) => item);
-                          const daily = availableDaily.filter((item) => (
-                            selectedDailyKeys.includes(scheduleItemKey(item)) && isIncomplete(item)
-                          ));
-                          const weekly = availableWeekly.filter((item) => (
-                            selectedWeeklyKeys.includes(scheduleItemKey(item)) && isIncomplete(item)
-                          ));
-                          const categories = [
-                            { id: 'daily', icon: '◷', label: '일일', items: daily, visible: selectedDailyKeys.length > 0 },
-                            { id: 'weekly', icon: '▦', label: '주간', items: weekly, visible: selectedWeeklyKeys.length > 0 },
-                            { id: 'bosses', icon: '⚔', label: '주간 보스', items: weeklyBosses, visible: weeklyBossSelectionCount(selectedBossKeys) > 0 },
-                            { id: 'monthly-bosses', icon: '⚔', label: '월간 보스', items: monthlyBosses, visible: selectedBossKeys.length > weeklyBossSelectionCount(selectedBossKeys) },
-                          ].filter((category) => category.visible);
-                          const incompleteCount = daily.length + weekly.length
-                            + weeklyBosses.filter((item) => isIncomplete(item, true)).length
-                            + monthlyBosses.filter((item) => isIncomplete(item, true)).length;
-                          const recommendedBossIds = new Set(
-                            recommendationsForCharacter(character, accountMultipliers.filter((entry) => (
-                              entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
-                            )), { includeSolo: true }).map(({ bossId }) => bossId),
-                          );
+                          const incompleteCount = selectedBosses.filter(({ item }) => isIncomplete(item, true)).length;
+                          const recommendedBosses = recommendationsForCharacter(character, accountMultipliers.filter((entry) => (
+                            entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+                          )), { includeSolo: true });
+                          const recommendedBossIds = new Set(recommendedBosses.map(({ bossId }) => bossId));
+                          const recommendedBossById = new Map(recommendedBosses.map((boss) => [boss.bossId, boss]));
                           const scheduleBossGroups = [];
                           for (const entry of availableBosses) {
                             let family = scheduleBossGroups.find(({ familyKey }) => familyKey === entry.option.familyKey);
@@ -1828,41 +1809,7 @@ function App() {
                                 <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'} · 미완료 {incompleteCount}</small></div>
                                 <span className={`schedule-total ${incompleteCount ? 'has-pending' : ''}`}>{scheduler.date || '기록 없음'}</span>
                               </header>
-                              <div className="schedule-preferences" aria-label={`${character.nickname} 표시할 일정 선택`}>
-                                <span className="schedule-preferences-label">표시할 일정</span>
-                                {[
-                                  { id: 'daily', label: '일일', icon: '◷', items: availableDaily, keys: selectedDailyKeys },
-                                  { id: 'weekly', label: '주간', icon: '▦', items: availableWeekly, keys: selectedWeeklyKeys },
-                                ].map((category) => (
-                                  <details className="schedule-boss-picker schedule-task-picker" key={category.id}>
-                                    <summary>{`${category.label} 선택 ${category.keys.length}/${category.items.length}`}</summary>
-                                    {category.items.length ? (
-                                      <div className="schedule-task-options">
-                                        {category.items.map((item) => {
-                                          const taskKey = scheduleItemKey(item);
-                                          const selected = category.keys.includes(taskKey);
-                                          return (
-                                            <label className="schedule-task-option" key={taskKey}>
-                                              <input
-                                                type="checkbox"
-                                                aria-label={`${character.nickname} ${category.label} 일정 ${item.content_name} 표시`}
-                                                checked={selected}
-                                                onChange={(event) => updateScheduleTaskSelection(
-                                                  character.ocid,
-                                                  category.id,
-                                                  taskKey,
-                                                  event.target.checked,
-                                                  category.keys,
-                                                )}
-                                              />
-                                              <span>{item.content_name}</span>
-                                            </label>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : <p className="schedule-boss-empty">넥슨 API에서 가져온 일정이 없습니다.</p>}
-                                  </details>
-                                ))}
+                              <div className="schedule-preferences schedule-boss-only" aria-label={`${character.nickname} 보스 선택`}>
                                 <details className="schedule-boss-picker">
                                   <summary>{`주간 보스 ${weeklyBossSelectionCount(selectedBossKeys)}/${bossRecommendationSettings.maxBossesPerCharacter} · 월간 ${selectedBossKeys.length - weeklyBossSelectionCount(selectedBossKeys)}종`}</summary>
                                     {availableBosses.length ? (
@@ -1914,37 +1861,29 @@ function App() {
                                   ) : <p className="schedule-boss-empty">등록된 보스 일정이 없습니다.</p>}
                                 </details>
                               </div>
-                              {categories.length ? <div className="schedule-task-groups">
-                                {categories.map((category) => (
-                                  <section className="schedule-task-group" key={category.id} aria-label={`${character.nickname} ${category.label} 일정`}>
-                                    <h3><span aria-hidden="true">{category.icon}</span>{category.label}<span>{category.items.length}</span></h3>
-                                    <div className="schedule-tasks">
-                                      {category.items.length && category.id.includes('bosses') ? category.items.map((item, index) => {
-                                        const option = scheduleBossOption(item);
-                                        const pending = isIncomplete(item, true);
-                                        const image = option.bossId ? bossImageFor(option.bossId) : null;
-                                        return (
-                                          <span className={`boss-card ${pending ? 'pending' : 'completed'}`} key={`${option.key}-${index}`}>
-                                            {image ? <img src={image} alt="" loading="lazy" /> : <span className="boss-placeholder" aria-hidden="true">◇</span>}
-                                            <span className="boss-card-info">
-                                              <strong>{option.name || item.content_name}</strong>
-                                              <em className={`boss-card-difficulty difficulty-${option.difficulty}`}>{option.difficultyLabel || '-'}</em>
-                                            </span>
-                                            {!pending && <b className="boss-card-done">✓ 완료</b>}
+                              <div className="schedule-task-groups">
+                                <section className="schedule-task-group schedule-task-group-bosses" aria-label={`${character.nickname} 보스 일정`}>
+                                  <h3><span aria-hidden="true">⚔</span>보스<span>{selectedBosses.length}</span></h3>
+                                  <div className="schedule-tasks">
+                                    {selectedBosses.length ? selectedBosses.map(({ item, option }) => {
+                                      const recommendation = recommendedBossById.get(option.bossId) || { recommendedPartySize: 1 };
+                                      const sizeLabel = recommendationPartyLabel(recommendation.recommendedPartySize);
+                                      const pending = isIncomplete(item, true);
+                                      const icon = bossImageFor(option.bossId);
+                                      return (
+                                        <span className={`boss-card ${pending ? 'pending' : 'completed'}`} key={option.key}>
+                                          {icon ? <img src={icon} alt="" loading="lazy" /> : <span className="boss-placeholder" aria-hidden="true">◇</span>}
+                                          <span className="boss-card-info">
+                                            <strong>{option.name || item.content_name}</strong>
+                                            <em className={`boss-card-difficulty difficulty-${option.difficulty}`}>{option.difficultyLabel || '-'}</em>
+                                            <small className="boss-card-size">{sizeLabel}</small>
                                           </span>
-                                        );
-                                      }) : category.items.length ? category.items.map((item, index) => (
-                                        <span className={`task-chip ${isIncomplete(item, category.id.includes('bosses')) ? 'pending' : 'completed'} task-${category.id}`} key={`${item.content_name}-${item.difficulty || ''}-${index}`}>
-                                          <span className="task-chip-icon" aria-hidden="true">{category.icon}</span>
-                                          {category.id.includes('bosses')
-                                            ? `${scheduleBossOption(item).difficultyLabel ? `${scheduleBossOption(item).difficultyLabel} ` : ''}${scheduleBossOption(item).name || item.content_name}`
-                                            : `${item.content_name}${item.max_count > 1 ? ` (${item.now_count || 0}/${item.max_count})` : ''}`}
                                         </span>
-                                      )) : <span className="task-chip completed">완료</span>}
-                                    </div>
-                                  </section>
-                                ))}
-                              </div> : <p className="schedule-selection-empty">표시할 일정이나 보스를 선택하세요.</p>}
+                                      );
+                                    }) : <span className="task-chip completed">보스를 선택하세요.</span>}
+                                  </div>
+                                </section>
+                              </div>
                             </article>
                           );
                         })}
@@ -2520,7 +2459,7 @@ function App() {
                                                     ? <img src={bossImageFor(boss.bossId)} alt="" />
                                                     : <span className="boss-placeholder" aria-hidden="true">◇</span>}
                                                   <span>{boss.difficultyLabel} {boss.name}</span>
-                                                  <b>{boss.recommendedPartySize}인 · {boss.multiplier.toFixed(1)}%</b>
+                                                  <b>{recommendationPartyLabel(boss.recommendedPartySize)} · {boss.multiplier.toFixed(1)}%</b>
                                                 </span>
                                               ))}
                                             </div>

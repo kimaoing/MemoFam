@@ -444,6 +444,41 @@ async function listGroups(env: Env, principal: GooglePrincipal): Promise<Respons
   return json({ groups: result.results || [] });
 }
 
+async function listGroupMembers(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  const result = await env.DB.prepare(`
+    SELECT gm.email,
+      COALESCE((
+        SELECT NULLIF(trim(s.name), '')
+        FROM auth_sessions s
+        WHERE lower(s.email) = lower(gm.email)
+        ORDER BY s.created_at DESC
+        LIMIT 1
+      ), '') AS name,
+      gm.role, gm.joined_at AS joinedAt,
+      (SELECT COUNT(*) FROM group_characters gc
+        WHERE gc.group_id = gm.group_id AND lower(gc.owner_email) = lower(gm.email)) AS characterCount,
+      CASE WHEN lower(gm.email) = lower(g.created_by_email) THEN 1 ELSE 0 END AS isOwner
+    FROM group_members gm
+    JOIN groups g ON g.id = gm.group_id
+    WHERE gm.group_id = ?
+    ORDER BY isOwner DESC, CASE WHEN gm.role = 'admin' THEN 0 ELSE 1 END, lower(gm.email)
+  `).bind(group.id).all<{
+    email: string;
+    name: string;
+    role: string;
+    joinedAt: string;
+    characterCount: number;
+    isOwner: number;
+  }>();
+  return json({
+    members: (result.results || []).map((member) => ({
+      ...member,
+      isOwner: member.isOwner === 1,
+    })),
+  });
+}
+
 async function updateGroup(
   env: Env,
   groupId: string,
@@ -565,7 +600,20 @@ async function removeGroupMember(env: Env, groupId: string, principal: GooglePri
   const group = await requireGroupAdmin(env, groupId, principal);
   const email = stringField(body, 'email', 254).toLowerCase();
   if (email === group.created_by_email.toLowerCase()) throw new ApiError(400, '그룹 생성자는 그룹에서 제거할 수 없습니다.');
-  await env.DB.prepare('DELETE FROM group_members WHERE group_id = ? AND lower(email) = lower(?)').bind(groupId, email).run();
+  if (email === principal.email.toLowerCase()) throw new ApiError(400, '본인 계정은 멤버 관리에서 제거할 수 없습니다.');
+  await env.DB.batch([
+    env.DB.prepare(`
+      DELETE FROM group_boss_participants
+      WHERE group_id = ? AND google_sub IN (
+        SELECT google_sub FROM group_characters
+        WHERE group_id = ? AND lower(owner_email) = lower(?)
+      )
+    `).bind(group.id, group.id, email),
+    env.DB.prepare('DELETE FROM group_characters WHERE group_id = ? AND lower(owner_email) = lower(?)')
+      .bind(group.id, email),
+    env.DB.prepare('DELETE FROM group_members WHERE group_id = ? AND lower(email) = lower(?)')
+      .bind(group.id, email),
+  ]);
   return json({ email, removed: true });
 }
 
@@ -893,12 +941,6 @@ async function commitGroupPartyDraft(
     draftParties.push({ partyId, bossId, familyId, members });
   }
 
-  for (const existingPartyId of existingParties.keys()) {
-    if (!currentPartyIds.has(existingPartyId)) {
-      throw new ApiError(400, '기존 파티를 모두 포함해 저장해 주세요.');
-    }
-  }
-
   const currentForeignAssignments = new Set((participantResult.results || [])
     .filter(({ ownerSub }) => ownerSub !== principal.sub)
     .map(({ partyId, ownerSub, nickname }) => `${partyId}:${ownerSub}:${nickname.toLowerCase()}`));
@@ -917,6 +959,10 @@ async function commitGroupPartyDraft(
   const createdAt = new Date().toISOString();
   const statements = [
     env.DB.prepare('DELETE FROM group_boss_participants WHERE group_id = ?').bind(group.id),
+    ...[...existingParties.keys()]
+      .filter((partyId) => !currentPartyIds.has(partyId))
+      .map((partyId) => env.DB.prepare('DELETE FROM group_boss_parties WHERE group_id = ? AND id = ?')
+        .bind(group.id, partyId)),
     ...draftParties
       .filter(({ partyId }) => !existingParties.has(partyId))
       .map(({ partyId, bossId, familyId }) => env.DB.prepare(`
@@ -1276,6 +1322,9 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
     if (path.length === 4 && path[3] === 'invites' && request.method === 'POST') {
       return createGroupInvite(env, groupId, principal);
+    }
+    if (path.length === 4 && path[3] === 'members' && request.method === 'GET') {
+      return listGroupMembers(env, groupId, principal);
     }
     if (path.length === 4 && path[3] === 'parties' && request.method === 'GET') {
       return listGroupParties(env, groupId, principal);

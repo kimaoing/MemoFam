@@ -228,6 +228,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   let groupCharacterAdded = false;
   let kalosPartyCount = 0;
   let groupImageBossId = null;
+  let groupMembers = [
+    { email: 'member@example.test', name: 'Member', role: 'admin', joinedAt: '2026-10-01T00:00:00.000Z', characterCount: 1, isOwner: true },
+    { email: 'teammate@example.test', name: 'Teammate', role: 'member', joinedAt: '2026-10-02T00:00:00.000Z', characterCount: 1, isOwner: false },
+  ];
   let committedPartySnapshot = null;
   const assignedCharacters = new Map();
   const groupParties = () => (committedPartySnapshot || Array.from({ length: kalosPartyCount }, (_, index) => ({
@@ -308,6 +312,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       groupImageBossId = request.mainImageBossId;
       return Response.json({ id: 'group-1', mainImageBossId: groupImageBossId });
     }
+    if (method === 'DELETE' && path === '/api/groups/group-1/members') {
+      groupMembers = groupMembers.filter(({ email }) => email !== request.email);
+      return Response.json({ email: request.email, removed: true });
+    }
     if (method === 'POST' && path === '/api/groups/group-1/parties') {
       kalosPartyCount += 1;
       return Response.json({ partyId: `party-kalos-${kalosPartyCount}`, bossId: request.bossId }, { status: 201 });
@@ -359,8 +367,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
             ? { characters: [syncedCharacters[0]] }
             : path === '/api/groups/group-1/characters'
               ? { characters: groupRoster() }
-            : path === '/api/groups/group-1/parties'
-              ? { parties: groupParties() }
+              : path === '/api/groups/group-1/members'
+                ? { members: groupMembers }
+              : path === '/api/groups/group-1/parties'
+                ? { parties: groupParties() }
             : path.endsWith('/multipliers')
               ? { multipliers: [
                 { nickname: '오잉느', bossId: 'normal_kalos', multiplier: 100 },
@@ -464,6 +474,17 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByTitle('Test group'));
   await waitFor(() => expect(screen.queryByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeNull());
   expect(screen.queryByText('일일 퀘스트')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /인원 관리/ }));
+  expect(screen.getByRole('heading', { name: 'Test group 인원 관리' })).toBeDefined();
+  expect(screen.getByText('teammate@example.test')).toBeDefined();
+  expect(screen.getByText('그룹장')).toBeDefined();
+  expect(screen.getByText('내 계정')).toBeDefined();
+  const teammateMemberCard = screen.getByText('teammate@example.test').closest('.group-member-card');
+  fireEvent.click(within(teammateMemberCard).getByRole('button', { name: '멤버 제거' }));
+  expect(within(teammateMemberCard).getByRole('alert').textContent).toContain('파티 편성도 함께 제거');
+  fireEvent.click(within(teammateMemberCard).getByRole('button', { name: '취소' }));
+  expect(workerCalls.some(({ method, path }) => method === 'DELETE' && path.endsWith('/members'))).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: '← 그룹 메인으로' }));
   fireEvent.click(screen.getByRole('button', { name: '그룹 설정' }));
   expect(screen.queryByRole('heading', { name: '보스를 고르고 파티를 편성하세요' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '칼로스 아이콘으로 설정' }));
@@ -553,6 +574,13 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const partyDialogAfterReopen = screen.getByRole('dialog', { name: '감시자 칼로스 파티 편성' });
   expect(partyDialogAfterReopen.querySelectorAll('.group-quick-roster-card')).toHaveLength(0);
   expect(partyDialogAfterReopen.querySelectorAll('.group-quick-party-member').length).toBeGreaterThan(0);
+  const partyCountBeforeDelete = partyDialogAfterReopen.querySelectorAll('.group-quick-party-card').length;
+  const partyCommitCountBeforeDelete = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
+  fireEvent.click(within(partyDialogAfterReopen).getAllByRole('button', { name: /번째 파티 삭제/ })[0]);
+  expect(partyDialogAfterReopen.querySelectorAll('.group-quick-party-card')).toHaveLength(partyCountBeforeDelete - 1);
+  expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(partyCommitCountBeforeDelete);
+  fireEvent.click(within(partyDialogAfterReopen).getByRole('button', { name: '변경 취소' }));
+  expect(partyDialogAfterReopen.querySelectorAll('.group-quick-party-card')).toHaveLength(partyCountBeforeDelete);
   fireEvent.click(within(partyDialogAfterReopen).getByRole('button', { name: '취소' }));
   expect(screen.queryByRole('dialog')).toBeNull();
   fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));

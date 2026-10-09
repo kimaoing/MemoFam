@@ -467,6 +467,75 @@ test('allows only group admins to change the sidebar image or delete the group',
   }
 });
 
+test('lists group members and removes a member with their roster and party assignments', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const originalBatch = env.DB.batch;
+  let batches = [];
+  let principalEmail = 'owner@example.test';
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: principalEmail, email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM groups g JOIN group_members')
+        ? {
+          id: 'group-1', name: 'Test group', created_by_sub: 'google-subject',
+          created_by_email: 'owner@example.test', role: 'admin',
+        }
+        : null,
+      all: async () => query.includes('FROM group_members gm')
+        ? { results: [
+          { email: 'owner@example.test', name: 'Owner', role: 'admin', joinedAt: '2026-10-01T00:00:00.000Z', characterCount: 2, isOwner: 1 },
+          { email: 'member@example.test', name: 'Member', role: 'member', joinedAt: '2026-10-02T00:00:00.000Z', characterCount: 1, isOwner: 0 },
+        ] }
+        : { results: [] },
+      run: async () => ({ success: true }),
+      query,
+      values,
+    }),
+  });
+  env.DB.batch = async (statements) => { batches.push(statements); };
+  try {
+    const listResponse = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1/members', {
+      headers: { Authorization: 'Bearer valid-token' },
+    }), env);
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(await listResponse.json(), {
+      members: [
+        { email: 'owner@example.test', name: 'Owner', role: 'admin', joinedAt: '2026-10-01T00:00:00.000Z', characterCount: 2, isOwner: true },
+        { email: 'member@example.test', name: 'Member', role: 'member', joinedAt: '2026-10-02T00:00:00.000Z', characterCount: 1, isOwner: false },
+      ],
+    });
+
+    const removeMember = (email) => worker.fetch(new Request('https://worker.example.test/api/groups/group-1/members', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }), env);
+    const removeResponse = await removeMember('member@example.test');
+    assert.equal(removeResponse.status, 200);
+    assert.deepEqual(await removeResponse.json(), { email: 'member@example.test', removed: true });
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0][0].query.includes('DELETE FROM group_boss_participants'), true);
+    assert.equal(batches[0][1].query.includes('DELETE FROM group_characters'), true);
+    assert.equal(batches[0][2].query.includes('DELETE FROM group_members'), true);
+
+    const ownerResponse = await removeMember('owner@example.test');
+    assert.equal(ownerResponse.status, 400);
+    assert.equal(batches.length, 1);
+
+    principalEmail = 'moderator@example.test';
+    const selfResponse = await removeMember('moderator@example.test');
+    assert.equal(selfResponse.status, 400);
+    assert.equal(batches.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+    env.DB.batch = originalBatch;
+  }
+});
+
 test('adds a group boss to D1', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;
@@ -710,6 +779,12 @@ test('commits a group party draft in one batch and protects duplicate and foreig
     assert.equal(duplicateResponse.status, 400);
     assert.equal(batches.length, 1);
 
+    const deletePartyResponse = await commit([]);
+    assert.equal(deletePartyResponse.status, 200);
+    assert.deepEqual(await deletePartyResponse.json(), { saved: true, partyCount: 0 });
+    assert.equal(batches.length, 2);
+    assert.equal(batches[1].some(({ query }) => query.includes('DELETE FROM group_boss_parties WHERE group_id = ? AND id = ?')), true);
+
     role = 'member';
     participants = [{ partyId: 'party-1', ownerSub: 'other-subject', nickname: '팀원' }];
     const foreignEditResponse = await commit([{
@@ -718,7 +793,7 @@ test('commits a group party draft in one batch and protects duplicate and foreig
       members: [{ ocid: 'ocid-1' }],
     }]);
     assert.equal(foreignEditResponse.status, 403);
-    assert.equal(batches.length, 1);
+    assert.equal(batches.length, 2);
   } finally {
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;

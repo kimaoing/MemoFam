@@ -131,12 +131,13 @@ GET /api/health와 POST /api/auth/google 외 보호된 요청에는 Worker가 �
 | `PATCH` | `/api/groups/:id` | 그룹 관리자의 대표 이미지 설정 |
 | `DELETE` | `/api/groups/:id` | 그룹과 종속 파티/참여 데이터 삭제 |
 | `POST` | `/api/groups/:id/members` | 그룹 관리자가 이메일 멤버 추가 |
-| `DELETE` | `/api/groups/:id/members` | 그룹 관리자가 멤버 제거 |
+| `GET` | `/api/groups/:id/members` | 그룹 참여 인원, 권한, 캐릭터 수 조회 |
+| `DELETE` | `/api/groups/:id/members` | 관리자가 멤버와 해당 그룹 캐릭터·파티 편성을 함께 제거 |
 | `GET` | `/api/groups/:id/bosses` | 그룹의 bossId 목록 조회 |
 | `POST` | `/api/groups/:id/bosses` | 관리자가 D1에 bossId 추가 |
 | `GET` | `/api/groups/:id/multipliers` | 그룹 캐릭터의 캐릭터 소유 배율 조회 |
 | `GET` | `/api/groups/:id/parties` | 그룹 파티와 파티원별 캐릭터 배율 조회 |
-| `PUT` | `/api/groups/:id/parties/commit` | 파티 편성 초안 전체를 검증한 뒤 D1 batch로 한 번에 저장 |
+| `PUT` | `/api/groups/:id/parties/commit` | 파티 추가·이동·삭제 초안 전체를 검증한 뒤 D1 batch로 한 번에 저장 |
 
 캐릭터 동기화 요청에는 Nexon API 키만 전달합니다. Worker는 캐릭터 목록에서 260레벨 이상인 캐릭터만 기본 정보와 스케줄러 현황을 조회해 Google 계정에 연결하고, API 키는 저장하지 않습니다. Nexon API 요청은 동기화 요청 안에서 초당 최대 5회가 되도록 간격을 두고 전송합니다. 기본 정보 조회에 실패한 캐릭터는 해당 동기화에서 건너뛰지만, 이미 저장된 캐릭터 정보는 삭제하지 않습니다. 스케줄러 조회에 실패해도 기본 정보가 있는 캐릭터는 등록하며, 스케줄 정보만 비워 둡니다. 캐릭터 기본 정보는 별도 조회 기준일 없이 가져오며, 스케줄러는 Nexon API의 `/maplestory/v1/scheduler/character-state` 응답을 사용합니다. 최신 현황이 필요하면 API 키를 다시 입력해 동기화합니다.
 

@@ -192,12 +192,13 @@ button:disabled { cursor: wait; opacity: .65; }
 .schedule-preference-option input { width: 14px; height: 14px; margin: 0; accent-color: #596fd1; }
 .schedule-boss-picker { position: relative; min-width: 0; }
 .schedule-boss-picker summary { min-height: 29px; padding: 6px 10px; border: 1px solid #e1e4eb; border-radius: 5px; color: #596071; font-size: 10px; cursor: pointer; list-style-position: inside; }
-.schedule-boss-options { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; display: grid; width: min(760px, calc(100vw - 48px)); max-height: 360px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 5px; overflow-y: auto; padding: 8px; border: 1px solid #d9dce5; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(20, 24, 35, .16); }
-.schedule-boss-family { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px; border: 1px solid #e6e8ef; border-radius: 7px; background: #fafbfe; }
-.schedule-boss-family header { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 6px; }
-.schedule-boss-family header img, .schedule-boss-family header .boss-placeholder { width: 28px; height: 28px; flex: 0 0 28px; object-fit: contain; }
-.schedule-boss-family header strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.schedule-boss-difficulties { display: flex; flex: 0 0 auto; gap: 3px; }
+.schedule-boss-options { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; display: grid; width: min(620px, calc(100vw - 48px)); max-height: 380px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; overflow-y: auto; padding: 7px; border: 1px solid #d9dce5; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(20, 24, 35, .16); }
+.schedule-boss-family { display: grid; min-width: 0; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 1px 6px; padding: 13px 6px 5px; border: 1px solid #e6e8ef; border-radius: 7px; background: #fafbfe; }
+.schedule-boss-family header { display: contents; }
+.schedule-boss-family header img, .schedule-boss-family header .boss-placeholder { grid-row: 1 / span 2; width: 30px; height: 30px; object-fit: contain; }
+.schedule-boss-family header strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.schedule-boss-difficulties { display: flex; flex-wrap: wrap; gap: 3px; }
+.schedule-boss-family .schedule-boss-difficulty { min-width: 24px; min-height: 22px; padding: 0 5px; font-size: 10px; }
 .schedule-boss-difficulty { display: inline-flex; min-width: 30px; min-height: 30px; align-items: center; justify-content: center; padding: 0 7px; border: 1px solid transparent; border-radius: 6px; color: #485064; font-size: 10px; font-weight: 800; cursor: pointer; }
 .schedule-boss-difficulty.difficulty-easy { background: #e4f3e9; color: #42805a; }
 .schedule-boss-difficulty.difficulty-normal { background: #e5edff; color: #4766b3; }
@@ -205,7 +206,12 @@ button:disabled { cursor: wait; opacity: .65; }
 .schedule-boss-difficulty.difficulty-extreme { background: #eee5ff; color: #7752b6; }
 .schedule-boss-difficulty.difficulty-chaos { background: #fff0dc; color: #a96b21; }
 .schedule-boss-difficulty input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.schedule-boss-difficulty.selected { border-color: #6579d6; box-shadow: inset 0 0 0 1px #6579d6; }
+.schedule-boss-difficulty { position: relative; transition: opacity .12s; }
+.schedule-boss-difficulty.dimmed { opacity: .38; filter: saturate(.55); }
+.schedule-boss-difficulty.dimmed:hover { opacity: .8; }
+.schedule-boss-difficulty.selected { border-color: #ff6b3d; box-shadow: 0 0 0 2px #ff6b3d; font-weight: 800; }
+.difficulty-check { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); color: #2fb36a; font-size: 12px; font-style: normal; font-weight: 900; line-height: 1; }
+.difficulty-star { position: absolute; top: -6px; right: -5px; color: #f5b301; font-size: 11px; font-style: normal; line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, .55); }
 .schedule-boss-difficulty:has(input:disabled) { opacity: .45; cursor: not-allowed; }
 .schedule-boss-difficulty:focus-within { outline: 2px solid #6579d6; outline-offset: 2px; }
 .schedule-task-options { position: absolute; z-index: 4; top: calc(100% + 5px); left: 0; display: grid; width: min(440px, calc(100vw - 48px)); max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 8px; overflow-y: auto; padding: 9px; border: 1px solid #d9dce5; border-radius: 8px; background: #fff; box-shadow: 0 8px 24px rgba(20, 24, 35, .16); }
@@ -546,7 +552,7 @@ button:disabled { cursor: wait; opacity: .65; }
   .my-schedule-list { grid-template-columns: 1fr; }
   .schedule-preferences { gap: 5px; }
   .schedule-preferences-label, .schedule-preference-option, .schedule-boss-picker summary { font-size: 9px; }
-  .schedule-boss-options { width: min(420px, calc(100vw - 35px)); grid-template-columns: 1fr; }
+  .schedule-boss-options { width: min(420px, calc(100vw - 35px)); grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .active-character-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
   .active-character-option { grid-template-rows: 92px auto auto; gap: 6px; min-height: 164px; padding: 15px 5px 9px; }
   .active-character-option > input { top: 7px; left: 7px; width: 15px; height: 15px; }
@@ -675,7 +681,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .schedule-boss-difficulty.difficulty-hard { border-color: #9a4d59; background: #48292f; color: #ffb8c0; }
 .app-shell[data-theme='dark'] .schedule-boss-difficulty.difficulty-extreme { border-color: #7756a9; background: #382b50; color: #d9c0ff; }
 .app-shell[data-theme='dark'] .schedule-boss-difficulty.difficulty-chaos { border-color: #9b6d36; background: #48351f; color: #ffd39b; }
-.app-shell[data-theme='dark'] .schedule-boss-difficulty.selected { border-color: #7185e0; box-shadow: inset 0 0 0 1px #7185e0; }
+.app-shell[data-theme='dark'] .schedule-boss-difficulty.selected { border-color: #ff7a4d; box-shadow: 0 0 0 2px #ff7a4d; }
 .app-shell[data-theme='dark'] .schedule-task-options { border-color: #414657; background: #20232d; box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
 .app-shell[data-theme='dark'] .schedule-task-option { color: #eef0f7; }
 .app-shell[data-theme='dark'] .schedule-task-option:hover { background: #2a2e3b; }

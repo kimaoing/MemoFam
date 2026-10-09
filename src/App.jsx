@@ -33,6 +33,23 @@ const bossFamilyDisplayNames = {
   seren: '세렌',
 };
 
+const bossFamilyTopPrice = bossRecommendationSettings.bosses.reduce((prices, boss) => {
+  prices[boss.familyId] = Math.max(prices[boss.familyId] || 0, boss.changedPrice);
+  return prices;
+}, {});
+
+const bossImageAliases = {
+  dusk: ['gloom'],
+  dunkel: ['darknell'],
+  guardianangelslime: ['slime'],
+  jinhilla: ['veruslilla', 'verushilla'],
+};
+
+function bossFamilyOrder(familyId) {
+  const index = bossRecommendationSettings.highDifficultyOverrides.indexOf(familyId);
+  return index === -1 ? bossRecommendationSettings.highDifficultyOverrides.length : index;
+}
+
 function bossImageFor(bossId) {
   const normalizedBossId = String(bossId || '').toLocaleLowerCase('en-US');
   const findImagePath = (imageBossId) => Object.keys(bossImages).find((path) => (
@@ -48,7 +65,14 @@ function bossImageFor(bossId) {
     .sort((left, right) => right.changedPrice - left.changedPrice)
     .find((entry) => findImagePath(entry.bossId.toLocaleLowerCase('en-US')));
   const familyImagePath = familyImageBoss && findImagePath(familyImageBoss.bossId.toLocaleLowerCase('en-US'));
-  return familyImagePath ? bossImages[familyImagePath] : null;
+  if (familyImagePath) return bossImages[familyImagePath];
+  const aliases = bossImageAliases[boss?.familyId] || [];
+  const aliasPaths = Object.keys(bossImages).filter((path) => aliases.some((alias) => (
+    path.split('/').at(-1).replace(/\.png$/i, '').toLocaleLowerCase('en-US').endsWith(`_${alias}`)
+  )));
+  const aliasPath = aliasPaths.find((path) => path.split('/').at(-1).toLocaleLowerCase('en-US')
+    .startsWith(`${boss.difficulty}_`)) || aliasPaths[0];
+  return aliasPath ? bossImages[aliasPath] : null;
 }
 
 function getGoogleAuthorizationCode() {
@@ -1778,6 +1802,9 @@ function App() {
                           const incompleteCount = daily.length + weekly.length
                             + weeklyBosses.filter((item) => isIncomplete(item, true)).length
                             + monthlyBosses.filter((item) => isIncomplete(item, true)).length;
+                          const recommendedBossIds = new Set(
+                            recommendationsForCharacter(character, multipliers).map(({ bossId }) => bossId),
+                          );
                           const scheduleBossGroups = [];
                           for (const entry of availableBosses) {
                             let family = scheduleBossGroups.find(({ familyKey }) => familyKey === entry.option.familyKey);
@@ -1786,6 +1813,13 @@ function App() {
                               scheduleBossGroups.push(family);
                             }
                             family.options.push(entry);
+                          }
+                          scheduleBossGroups.sort((left, right) => bossFamilyOrder(left.familyKey) - bossFamilyOrder(right.familyKey)
+                            || (bossFamilyTopPrice[right.familyKey] || 0) - (bossFamilyTopPrice[left.familyKey] || 0)
+                            || left.name.localeCompare(right.name, 'ko'));
+                          for (const family of scheduleBossGroups) {
+                            family.options.sort((left, right) => (bossRecommendationSettings.difficultyRanks[right.option.difficulty] || 0)
+                              - (bossRecommendationSettings.difficultyRanks[left.option.difficulty] || 0));
                           }
                           return (
                             <article className="my-schedule-character" key={character.ocid}>
@@ -1857,9 +1891,9 @@ function App() {
                                                 }[option.difficulty] || option.difficultyLabel.slice(0, 1);
                                                 return (
                                                   <label
-                                                    className={`schedule-boss-difficulty difficulty-${option.difficulty} ${selected ? 'selected' : ''}`}
+                                                    className={`schedule-boss-difficulty difficulty-${option.difficulty} ${selected ? 'selected' : ''} ${familySelection && !selected ? 'dimmed' : ''} ${recommendedBossIds.has(option.bossId) ? 'recommended' : ''}`}
                                                     key={option.key}
-                                                    title={option.difficultyLabel}
+                                                    title={`${option.difficultyLabel}${recommendedBossIds.has(option.bossId) ? ' · 추천' : ''}`}
                                                   >
                                                     <input
                                                       type="checkbox"
@@ -1869,6 +1903,8 @@ function App() {
                                                       onChange={(event) => updateScheduleBossSelection(character.ocid, option, event.target.checked, selectedBossKeys)}
                                                     />
                                                     <span aria-hidden="true">{difficultySymbol}</span>
+                                                    {selected && <i className="difficulty-check" aria-hidden="true">✓</i>}
+                                                    {recommendedBossIds.has(option.bossId) && <i className="difficulty-star" aria-hidden="true">★</i>}
                                                   </label>
                                                 );
                                               })}

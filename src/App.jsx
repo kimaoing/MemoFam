@@ -117,6 +117,12 @@ function readActiveCharacterIds(email, characters) {
   }
 }
 
+function validActiveCharacterIds(ids, characters) {
+  if (!Array.isArray(ids)) return [];
+  const availableIds = new Set(characters.map(({ ocid }) => ocid));
+  return [...new Set(ids.filter((ocid) => typeof ocid === 'string' && availableIds.has(ocid)))];
+}
+
 function recommendationsForCharacter(character, multipliers) {
   const multiplierByBoss = new Map();
   for (const entry of multipliers) {
@@ -204,6 +210,8 @@ function App() {
   const [characters, setCharacters] = useState([]);
   const [activeCharacterIds, setActiveCharacterIds] = useState([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
+  const [characterSearch, setCharacterSearch] = useState('');
+  const [characterWorldFilter, setCharacterWorldFilter] = useState('');
   const [groups, setGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [multipliers, setMultipliers] = useState([]);
@@ -231,6 +239,7 @@ function App() {
   const mapleScouterPopup = useRef(null);
   const mapleScouterRequest = useRef(null);
   const mapleScouterTimeout = useRef(null);
+  const characterSelectionSaveQueue = useRef(Promise.resolve());
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -318,7 +327,7 @@ function App() {
       return {
         groupId: group.id,
         characters: characterResult.characters || [],
-        multipliers: multiplierResult.multipliers || [],
+        multipliers: (multiplierResult.multipliers || []).map((entry) => ({ ...entry, groupId: group.id })),
       };
     }));
     setAllGroupCharacters(results.flatMap(({ groupId, characters: groupRoster }) => (
@@ -342,42 +351,6 @@ function App() {
       setBusy('');
     }
   }
-
-  async function copyGroupInvite() {
-    if (!inviteLink) return;
-    try {
-      await navigator.clipboard.writeText(inviteLink);
-      setNotice({ type: 'success', text: '그룹 초대 링크를 복사했습니다.' });
-    } catch {
-      setNotice({ type: 'error', text: '링크 복사에 실패했습니다. 링크를 선택해 직접 복사해 주세요.' });
-    }
-  }
-
-  async function addCharacterToGroup(ocid) {
-    try {
-      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/characters`, {
-        method: 'POST',
-        body: JSON.stringify({ ocid }),
-      });
-      await loadGroupData(accessToken, selectedGroupId);
-      setNotice({ type: 'success', text: '캐릭터를 그룹 로스터에 추가했습니다.' });
-    } catch (error) {
-      reportError(error);
-    }
-  }
-
-  async function removeCharacterFromGroup(character) {
-    try {
-      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/characters`, {
-        method: 'DELETE',
-        body: JSON.stringify({ ocid: character.ocid }),
-      });
-      await loadGroupData(accessToken, selectedGroupId);
-    } catch (error) {
-      reportError(error);
-    }
-  }
-
   async function assignBossToCharacter(character, boss) {
     setBusy(`party:${character.ocid}:${boss.bossId}`);
     try {
@@ -386,6 +359,7 @@ function App() {
         body: JSON.stringify({ bossId: boss.bossId }),
       });
       await loadGroupData(accessToken, selectedGroupId);
+      await loadAllGroupPartyData(accessToken);
       setNotice({
         type: 'success',
         text: result.replacedBossId
@@ -406,6 +380,7 @@ function App() {
         body: JSON.stringify({ bossId }),
       });
       await loadGroupData(accessToken, selectedGroupId);
+      await loadAllGroupPartyData(accessToken);
     } catch (error) {
       reportError(error);
     }
@@ -442,22 +417,6 @@ function App() {
     });
   }
 
-  async function createGroupInvite() {
-    if (!selectedGroupId) return;
-    setBusy('invite');
-    try {
-      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/invites`, { method: 'POST' });
-      const url = new URL(window.location.pathname, window.location.origin);
-      url.searchParams.set('invite', result.token);
-      setInviteLink(url.toString());
-      setNotice({ type: 'success', text: `초대 링크를 만들었습니다. ${new Date(result.expiresAt).toLocaleString('ko-KR')}까지 사용할 수 있습니다.` });
-    } catch (error) {
-      reportError(error);
-    } finally {
-      setBusy('');
-    }
-  }
-
   async function copyGroupInvite() {
     if (!inviteLink) return;
     try {
@@ -476,6 +435,7 @@ function App() {
         body: JSON.stringify({ ocid }),
       });
       await loadGroupData(accessToken, selectedGroupId);
+      await loadAllGroupPartyData(accessToken);
       setNotice({ type: 'success', text: '캐릭터를 그룹 로스터에 추가했습니다.' });
     } catch (error) {
       reportError(error);
@@ -490,6 +450,7 @@ function App() {
         body: JSON.stringify({ ocid }),
       });
       await loadGroupData(accessToken, selectedGroupId);
+      await loadAllGroupPartyData(accessToken);
     } catch (error) {
       reportError(error);
     }
@@ -517,13 +478,23 @@ function App() {
       }
       const token = await getGoogleAccessToken(silent ? '' : 'select_account');
       const profile = await getGoogleProfile(token);
-      const [groupResult, characterResult] = await Promise.all([
+      const [groupResult, characterResult, selectionResult] = await Promise.all([
         workerRequest(token, '/api/groups'),
         workerRequest(token, '/api/characters'),
+        workerRequest(token, '/api/characters/selection').catch(() => null),
       ]);
       const savedCharacters = characterResult.characters || [];
       let savedGroups = groupResult.groups || [];
-      const savedActiveCharacterIds = readActiveCharacterIds(profile.email, savedCharacters);
+      const savedActiveCharacterIds = selectionResult
+        ? validActiveCharacterIds(selectionResult.ocids, savedCharacters)
+        : readActiveCharacterIds(profile.email, savedCharacters);
+      if (selectionResult) {
+        try {
+          window.localStorage.setItem(activeCharactersStorageKey(profile.email), JSON.stringify(savedActiveCharacterIds));
+        } catch {
+          // The Worker remains the source of truth when browser storage is unavailable.
+        }
+      }
       setAccessToken(token);
       setAccount({ email: profile.email, name: profile.name, sub: profile.sub });
       setCharacters(savedCharacters);
@@ -550,7 +521,10 @@ function App() {
       const initialGroupId = inviteGroupId || savedGroups[0]?.id || '';
       setSelectedGroupId(initialGroupId);
       if (inviteGroupId) setView('group');
-      await loadGroupData(token, initialGroupId);
+      await Promise.all([
+        loadGroupData(token, initialGroupId),
+        loadAllGroupPartyData(token, savedGroups),
+      ]);
       if (!silent && !inviteGroupId) setNotice({ type: 'success', text: `${profile.email} 계정으로 연결했습니다.` });
     } catch (error) {
       if (!silent) reportError(error);
@@ -625,6 +599,15 @@ function App() {
       window.localStorage.setItem(activeCharactersStorageKey(account.email), JSON.stringify(uniqueIds));
     } catch {
       setNotice({ type: 'error', text: '선택한 캐릭터를 이 브라우저에 저장하지 못했습니다.' });
+    }
+    if (accessToken) {
+      characterSelectionSaveQueue.current = characterSelectionSaveQueue.current
+        .catch(() => {})
+        .then(() => workerRequest(accessToken, '/api/characters/selection', {
+          method: 'PUT',
+          body: JSON.stringify({ ocids: uniqueIds }),
+        }))
+        .catch((error) => reportError(error));
     }
   }
 
@@ -805,6 +788,7 @@ function App() {
       if (groupId) {
         try {
           await loadGroupData(accessToken, groupId);
+          await loadAllGroupPartyData(accessToken);
         } catch (error) {
           failures.push(`그룹 배율 새로고침: ${error.message || '실패'}`);
         }
@@ -828,9 +812,30 @@ function App() {
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
   const activeCharacters = characters.filter(({ ocid }) => activeCharacterIds.includes(ocid));
-  const activeCharacterWorldGroups = groupCharactersByWorld(activeCharacters);
+  const normalizedSearch = characterSearch.trim().toLocaleLowerCase('ko');
+  const filteredActiveCharacters = activeCharacters.filter((character) => {
+    const matchesSearch = !normalizedSearch || [character.nickname, character.characterClass, character.worldName]
+      .some((value) => value?.toLocaleLowerCase('ko').includes(normalizedSearch));
+    const matchesWorld = !characterWorldFilter || (character.worldName || '월드 정보 없음') === characterWorldFilter;
+    return matchesSearch && matchesWorld;
+  });
+  const activeCharacterWorldGroups = groupCharactersByWorld(filteredActiveCharacters);
+  const activeCharacterWorlds = [...new Set(activeCharacters.map(({ worldName }) => worldName || '월드 정보 없음'))]
+    .sort((left, right) => left.localeCompare(right, 'ko'));
   const characterWorldGroups = groupCharactersByWorld(characters);
   const selectedCharacter = activeCharacters.find(({ ocid }) => ocid === selectedCharacterId);
+  const unassignedRecommendations = new Map();
+  for (const character of activeCharacters) {
+    const characterMultipliers = allGroupMultipliers.filter((entry) => (
+      entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+    ));
+    const assignedBossIds = new Set(allGroupCharacters
+      .filter((entry) => entry.ocid === character.ocid)
+      .flatMap((entry) => (entry.bosses || []).map(({ bossId }) => bossId)));
+    const missing = recommendationsForCharacter(character, characterMultipliers)
+      .filter(({ bossId }) => !assignedBossIds.has(bossId));
+    if (missing.length) unassignedRecommendations.set(character.ocid, missing);
+  }
   const groupedPartyRows = new Map();
   for (const character of groupCharacters) {
     for (const assignment of character.bosses || []) {
@@ -1116,8 +1121,34 @@ function App() {
                         </button>
                       </div>
                     </div>
+                    {activeCharacters.length > 0 && (
+                      <div className="character-filter-bar">
+                        <label>
+                          <span>캐릭터 검색</span>
+                          <input
+                            aria-label="캐릭터 검색"
+                            type="search"
+                            value={characterSearch}
+                            onChange={(event) => setCharacterSearch(event.target.value)}
+                            placeholder="닉네임 또는 직업"
+                          />
+                        </label>
+                        <label>
+                          <span>월드</span>
+                          <select aria-label="월드 필터" value={characterWorldFilter} onChange={(event) => setCharacterWorldFilter(event.target.value)}>
+                            <option value="">전체 월드</option>
+                            {activeCharacterWorlds.map((worldName) => <option key={worldName} value={worldName}>{worldName}</option>)}
+                          </select>
+                        </label>
+                        {(characterSearch || characterWorldFilter) && (
+                          <button className="quiet-button" type="button" onClick={() => { setCharacterSearch(''); setCharacterWorldFilter(''); }}>
+                            필터 초기화
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {activeCharacters.length ? (
-                      activeCharacterWorldGroups.map(({ worldName, characters: worldCharacters }) => (
+                      filteredActiveCharacters.length ? activeCharacterWorldGroups.map(({ worldName, characters: worldCharacters }) => (
                         <section className="world-character-group" key={worldName} aria-label={`${worldName} 캐릭터`}>
                           <h3 className="world-character-heading">{worldName}</h3>
                           <div className="character-grid">
@@ -1145,12 +1176,21 @@ function App() {
                                         : Number(character.boss380HexaScore).toLocaleString('ko-KR')}</strong>
                                     </span>
                                   </span>
+                                  {unassignedRecommendations.has(character.ocid) && (
+                                    <span
+                                      className="unassigned-party-indicator"
+                                      title={`그룹 파티 미편성 추천: ${unassignedRecommendations.get(character.ocid).map(({ difficultyLabel, name }) => `${difficultyLabel} ${name}`).join(', ')}`}
+                                      aria-label={`${character.nickname} 추천 보스가 그룹 파티에 편성되지 않음`}
+                                    >!</span>
+                                  )}
                                 </button>
                               );
                             })}
                           </div>
                         </section>
-                      ))
+                      )) : (
+                        <div className="empty-state compact"><strong>검색 결과가 없습니다</strong><p>검색어나 월드 필터를 바꿔 보세요.</p></div>
+                      )
                     ) : (
                       <div className="empty-state">
                         <span className="empty-icon">＋</span>
@@ -1301,68 +1341,6 @@ function App() {
                             <p>그룹 및 파티 관리에서 캐릭터를 추가하고 추천 보스를 배정하세요.</p>
                           </div>
                         )}
-                      </section>
-                      <section className="panel-section my-schedule-section">
-                        <div className="section-heading">
-                          <div><p className="eyebrow">MY SCHEDULE</p><h2>내 캐릭터 미완료 일정</h2></div>
-                          <button className="outline-button" type="button" onClick={requestScheduleNotificationPermission}>
-                            {'Notification' in window && Notification.permission === 'granted' ? '알림 허용됨' : '알림 허용'}
-                          </button>
-                        </div>
-                        {!activeCharacters.length ? (
-                          <div className="empty-state compact"><strong>실사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 일정 관리할 캐릭터를 선택하세요.</p></div>
-                        ) : (
-                          <div className="my-schedule-list">
-                            {activeCharacters.map((character) => {
-                              const scheduler = character.scheduler || {};
-                              const categories = [
-                                { id: 'daily', icon: '◷', label: '일일', items: (scheduler.daily_contents || []).filter((item) => isIncomplete(item)) },
-                                { id: 'weekly', icon: '▦', label: '주간', items: (scheduler.weekly_contents || []).filter((item) => isIncomplete(item)) },
-                                { id: 'bosses', icon: '⚔', label: '보스', items: (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true)) },
-                              ];
-                              const total = categories.reduce((sum, category) => sum + category.items.length, 0);
-                              const preferences = scheduleNotificationPreferences[character.ocid] || {};
-                              return (
-                                <article className="my-schedule-character" key={character.ocid}>
-                                  <header className="my-schedule-character-heading">
-                                    {character.image ? <img src={character.image} alt="" loading="lazy" /> : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
-                                    <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'} · 미완료 {total}</small></div>
-                                    <span className={`schedule-total ${total ? 'has-pending' : ''}`}>{scheduler.date || '기록 없음'}</span>
-                                  </header>
-                                  <div className="schedule-alert-options">
-                                    {categories.map((category) => (
-                                      <label className="schedule-alert-option" key={category.id}>
-                                        <input
-                                          type="checkbox"
-                                          aria-label={`${character.nickname} ${category.label} 일정 알림`}
-                                          checked={Boolean(preferences[category.id])}
-                                          onChange={(event) => updateScheduleNotificationPreference(character.ocid, category.id, event.target.checked)}
-                                        />
-                                        <span>{category.icon} {category.label} 알림</span>
-                                      </label>
-                                    ))}
-                                  </div>
-                                  <div className="schedule-task-groups">
-                                    {categories.map((category) => (
-                                      <section className="schedule-task-group" key={category.id} aria-label={`${character.nickname} ${category.label} 일정`}>
-                                        <h3><span aria-hidden="true">{category.icon}</span>{category.label}<span>{category.items.length}</span></h3>
-                                        <div className="schedule-tasks">
-                                          {category.items.length ? category.items.map((item, index) => (
-                                            <span className={`task-chip pending task-${category.id}`} key={`${item.content_name}-${item.difficulty || ''}-${index}`}>
-                                              <span className="task-chip-icon" aria-hidden="true">{category.icon}</span>
-                                              {item.content_name}{item.difficulty ? ` ${item.difficulty}` : ''}{category.id !== 'bosses' && item.max_count > 1 ? ` (${item.now_count || 0}/${item.max_count})` : ''}
-                                            </span>
-                                          )) : <span className="task-chip completed">완료</span>}
-                                        </div>
-                                      </section>
-                                    ))}
-                                  </div>
-                                </article>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <p className="privacy-note">선택한 알림은 브라우저에서 앱을 열었을 때 동기화된 미완료 일정 기준으로 표시됩니다.</p>
                       </section>
                     </>
                   )}

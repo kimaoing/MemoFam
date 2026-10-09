@@ -69,6 +69,50 @@ test('blocks an authenticated non-member from a group', async () => {
   }
 });
 
+test('persists active character selection per Google account and rejects unowned characters', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const ownedOcids = ['ocid-1', 'ocid-2'];
+  let savedSelection = '[]';
+  let savedValues;
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: 'member@example.test', email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM character_preferences') ? { ocidsJson: savedSelection } : null,
+      all: async () => ({ results: values.slice(1).filter((ocid) => ownedOcids.includes(ocid)).map((ocid) => ({ ocid })) }),
+      run: async () => {
+        savedValues = values;
+        savedSelection = values[1];
+        return { success: true };
+      },
+    }),
+  });
+  const request = (method, body) => worker.fetch(new Request('https://worker.example.test/api/characters/selection', {
+    method,
+    headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }), env);
+  try {
+    const saveResponse = await request('PUT', { ocids: ['ocid-1', 'ocid-2', 'ocid-1'] });
+    assert.equal(saveResponse.status, 200);
+    assert.deepEqual(await saveResponse.json(), { ocids: ['ocid-1', 'ocid-2'] });
+    assert.equal(savedValues[0], 'google-subject');
+    assert.equal(savedValues[1], '["ocid-1","ocid-2"]');
+
+    const getResponse = await request('GET');
+    assert.deepEqual(await getResponse.json(), { ocids: ['ocid-1', 'ocid-2'] });
+
+    const unownedResponse = await request('PUT', { ocids: ['ocid-foreign'] });
+    assert.equal(unownedResponse.status, 403);
+    assert.deepEqual(await unownedResponse.json(), { error: '본인이 인증한 캐릭터만 선택할 수 있습니다.' });
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+  }
+});
+
 test('imports browser-captured scores and every valid boss multiplier for a group member', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;

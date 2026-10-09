@@ -160,7 +160,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     {
       nickname: '아잉느',
       ocid: 'ocid-2',
-      worldName: '스카니아',
+      worldName: '루나',
       characterClass: '비숍',
       level: 280,
       image: 'https://image.example.test/ocid-2.png',
@@ -188,16 +188,32 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       scheduler: { date: '2026-10-08', daily_contents: [], weekly_contents: [], boss_contents: [] },
     },
   ];
+  let groupCharacterAdded = false;
+  let kalosAssigned = false;
+  const groupRoster = () => (groupCharacterAdded ? [{
+    ...syncedCharacters[0],
+    ownerSub: 'member-sub',
+    ownerEmail: 'member@example.test',
+    bosses: kalosAssigned ? [{ bossId: 'chaos_kalos', familyId: 'kalos' }] : [],
+  }] : []);
   vi.stubGlobal('fetch', async (input, init = {}) => {
     const url = String(input);
     const path = new URL(url, 'http://localhost').pathname;
     const method = init.method || 'GET';
     if (url.includes('googleapis.com/oauth2/v3/userinfo')) {
-      return Response.json({ email: 'member@example.test', name: 'Member' });
+      return Response.json({ email: 'member@example.test', name: 'Member', sub: 'member-sub' });
     }
 
     const request = init.body ? JSON.parse(init.body) : {};
     workerCalls.push({ path, method, init, request });
+    if (method === 'POST' && path === '/api/groups/group-1/characters') {
+      groupCharacterAdded = true;
+      return Response.json({ added: true });
+    }
+    if (method === 'POST' && path.startsWith('/api/groups/group-1/party-characters/')) {
+      kalosAssigned = true;
+      return Response.json({ bossId: 'chaos_kalos', familyId: 'kalos', added: true }, { status: 201 });
+    }
     const payload = method === 'POST' && path === '/api/characters/verify'
       ? {
         characters: syncedCharacters,
@@ -221,10 +237,21 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
         }
       : method === 'POST' && path.endsWith('/multipliers')
         ? { nickname: request.nickname, updated: 1 }
+        : path === '/api/characters/selection' && method === 'GET'
+          ? { ocids: [] }
+          : path === '/api/characters/selection' && method === 'PUT'
+            ? { ocids: request.ocids }
         : path === '/api/groups'
           ? { groups: [{ id: 'group-1', name: 'Test group', role: 'admin' }] }
           : path === '/api/characters'
             ? { characters: [syncedCharacters[0]] }
+            : path === '/api/groups/group-1/characters'
+              ? { characters: groupRoster() }
+            : path.endsWith('/multipliers')
+              ? { multipliers: [
+                { nickname: '오잉느', bossId: 'normal_kalos', multiplier: 100 },
+                { nickname: '오잉느', bossId: 'chaos_kalos', multiplier: 50 },
+              ] }
             : path.endsWith('/bosses')
               ? { bossIds: ['normal_kaling'] }
               : { multipliers: [] };
@@ -248,7 +275,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
 
   fireEvent.change(screen.getByLabelText('Nexon Open API 키'), { target: { value: 'test-nexon-key' } });
   fireEvent.click(screen.getByRole('button', { name: '캐릭터 불러오기' }));
-  expect((await screen.findByRole('status')).textContent).toContain('4개 캐릭터 정보를 동기화했습니다.');
+  await waitFor(() => expect(screen.getByRole('status').textContent).toContain('4개 캐릭터 정보를 동기화했습니다.'));
   expect(screen.queryByText(/숨길캐릭터/)).toBeNull();
   expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' })).toBeDefined();
   expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' })).toBeDefined();
@@ -263,18 +290,48 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' }));
   expect(window.localStorage.getItem('maple-scout-active-characters:member@example.test'))
     .toBe(JSON.stringify(['ocid-1', 'ocid-2']));
+  await waitFor(() => expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path === '/api/characters/selection').at(-1).request.ocids)
+    .toEqual(['ocid-1', 'ocid-2']));
   fireEvent.click(screen.getByTitle('내 정보'));
   expect(screen.getByRole('heading', { name: '실사용 캐릭터 2' })).toBeDefined();
+  expect(screen.getByRole('searchbox', { name: '캐릭터 검색' })).toBeDefined();
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
   expect(screen.queryByRole('button', { name: /최고레벨/ })).toBeNull();
   expect(screen.queryByRole('button', { name: /세번째/ })).toBeNull();
   expect(screen.getByText('72,807')).toBeDefined();
+  const unassignedIndicator = screen.getByLabelText('오잉느 추천 보스가 그룹 파티에 편성되지 않음');
+  expect(unassignedIndicator.getAttribute('title')).toContain('카오스 칼로스');
+
+  fireEvent.change(screen.getByRole('searchbox', { name: '캐릭터 검색' }), { target: { value: '아잉' } });
+  expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
+  expect(screen.queryByRole('button', { name: /오잉느/ })).toBeNull();
+  fireEvent.change(screen.getByRole('searchbox', { name: '캐릭터 검색' }), { target: { value: '' } });
+  fireEvent.change(screen.getByRole('combobox', { name: '월드 필터' }), { target: { value: '스카니아' } });
+  expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
+  expect(screen.queryByRole('button', { name: /아잉느/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '필터 초기화' }));
+
+  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 일일 일정 알림' }));
+  expect(JSON.parse(window.localStorage.getItem('maple-scout-schedule-notifications:member@example.test')))
+    .toEqual({ 'ocid-1': { daily: true } });
+  expect(screen.getByText('일일 퀘스트')).toBeDefined();
 
   fireEvent.click(screen.getByRole('button', { name: /아잉느/ }));
   fireEvent.click(screen.getByTitle('Test group'));
-  expect(await screen.findByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeDefined();
-  expect(screen.getByText('일일 퀘스트')).toBeDefined();
+  await waitFor(() => expect(screen.queryByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeNull());
+  expect(screen.queryByText('일일 퀘스트')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '그룹 및 파티 관리' }));
+  const addOwnCharacterButton = screen.getByText('오잉느').closest('.group-add-character').querySelector('button');
+  fireEvent.click(addOwnCharacterButton);
+  const chaosKalosRecommendation = await screen.findByText('카오스 칼로스');
+  expect(chaosKalosRecommendation.closest('.recommendation-row').textContent).toContain('추천 2인');
+  fireEvent.click(chaosKalosRecommendation.closest('.recommendation-row').querySelector('button'));
+  await waitFor(() => expect(screen.getByText('카오스 칼로스', { selector: '.assigned-boss-chip span:first-child' })).toBeDefined());
+  fireEvent.click(screen.getByTitle('내 정보'));
+  await waitFor(() => expect(screen.queryByLabelText('오잉느 추천 보스가 그룹 파티에 편성되지 않음')).toBeNull());
+  fireEvent.click(screen.getByTitle('Test group'));
+  await waitFor(() => expect(screen.queryByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeNull());
   fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));
   expect(window.open).toHaveBeenNthCalledWith(1, 'about:blank', '_blank');
   await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));

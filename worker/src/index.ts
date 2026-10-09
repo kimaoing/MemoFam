@@ -42,7 +42,7 @@ function withCors(response: Response, origin: string | null): Response {
   headers.set('Vary', 'Origin');
   if (origin) {
     headers.set('Access-Control-Allow-Origin', origin);
-    headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     headers.set('Access-Control-Max-Age', '600');
   }
@@ -315,6 +315,47 @@ async function listCharacters(env: Env, principal: GooglePrincipal): Promise<Res
     scheduler: JSON.parse(schedulerJson),
   }));
   return json({ characters });
+}
+
+async function getCharacterSelection(env: Env, principal: GooglePrincipal): Promise<Response> {
+  const preference = await env.DB.prepare(`
+    SELECT active_character_ocids_json AS ocidsJson
+    FROM character_preferences WHERE google_sub = ?
+  `).bind(principal.sub).first<{ ocidsJson: string }>();
+  let ocids: unknown = [];
+  try {
+    ocids = JSON.parse(preference?.ocidsJson || '[]');
+  } catch {
+    ocids = [];
+  }
+  return json({ ocids: Array.isArray(ocids) ? ocids.filter((ocid) => typeof ocid === 'string') : [] });
+}
+
+async function saveCharacterSelection(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  if (Object.keys(body).some((key) => key !== 'ocids') || !Array.isArray(body.ocids) || body.ocids.length > 200
+    || body.ocids.some((ocid) => typeof ocid !== 'string' || ocid.length > 80)) {
+    throw new ApiError(400, '캐릭터 선택 목록 형식이 올바르지 않습니다.');
+  }
+  const ocids = [...new Set(body.ocids as string[])];
+  if (ocids.length) {
+    const placeholders = ocids.map(() => '?').join(', ');
+    const owned = await env.DB.prepare(`
+      SELECT ocid FROM characters WHERE google_sub = ? AND ocid IN (${placeholders})
+    `).bind(principal.sub, ...ocids).all<{ ocid: string }>();
+    const ownedOcids = new Set((owned.results || []).map(({ ocid }) => ocid));
+    if (ocids.some((ocid) => !ownedOcids.has(ocid))) {
+      throw new ApiError(403, '본인이 인증한 캐릭터만 선택할 수 있습니다.');
+    }
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO character_preferences (google_sub, active_character_ocids_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT (google_sub) DO UPDATE SET
+      active_character_ocids_json = excluded.active_character_ocids_json,
+      updated_at = excluded.updated_at
+  `).bind(principal.sub, JSON.stringify(ocids), new Date().toISOString()).run();
+  return json({ ocids });
 }
 
 async function addGroupMember(env: Env, groupId: string, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
@@ -668,6 +709,12 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (request.method === 'GET' && path.length === 2 && path[1] === 'groups') return listGroups(env, principal);
   if (request.method === 'GET' && path.length === 2 && path[1] === 'characters') return listCharacters(env, principal);
+  if (request.method === 'GET' && path.length === 3 && path[1] === 'characters' && path[2] === 'selection') {
+    return getCharacterSelection(env, principal);
+  }
+  if (request.method === 'PUT' && path.length === 3 && path[1] === 'characters' && path[2] === 'selection') {
+    return saveCharacterSelection(env, principal, await readBody(request));
+  }
   if (request.method === 'POST' && path.length === 3 && path[1] === 'characters' && path[2] === 'maplescouter-scores') {
     throw new ApiError(410, 'MapleScouter 점수는 로그인 앱의 브라우저 가져오기로 저장해 주세요.');
   }

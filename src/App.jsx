@@ -42,7 +42,7 @@ const bossImageAliases = {
   dusk: ['gloom'],
   dunkel: ['darknell'],
   guardianangelslime: ['slime'],
-  jinhilla: ['veruslilla', 'verushilla'],
+  jinhilla: ['verushilla'],
 };
 
 function bossFamilyOrder(familyId) {

@@ -406,7 +406,6 @@ function App() {
   const [characters, setCharacters] = useState([]);
   const [activeCharacterIds, setActiveCharacterIds] = useState([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
-  const [characterSearch, setCharacterSearch] = useState('');
   const [characterWorldFilter, setCharacterWorldFilter] = useState('');
   const [groups, setGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
@@ -1213,12 +1212,9 @@ function App() {
   const personalParties = allGroupParties.filter((party) => (
     (party.members || []).some((member) => member.ownerSub === account?.sub && activeOcids.has(member.ocid))
   ));
-  const normalizedSearch = characterSearch.trim().toLocaleLowerCase('ko');
   const filteredActiveCharacters = activeCharacters.filter((character) => {
-    const matchesSearch = !normalizedSearch || [character.nickname, character.characterClass, character.worldName]
-      .some((value) => value?.toLocaleLowerCase('ko').includes(normalizedSearch));
     const matchesWorld = !characterWorldFilter || (character.worldName || '월드 정보 없음') === characterWorldFilter;
-    return matchesSearch && matchesWorld;
+    return matchesWorld;
   });
   const activeCharacterWorldGroups = groupCharactersByWorld(filteredActiveCharacters);
   const activeCharacterWorlds = [...new Set(activeCharacters.map(({ worldName }) => worldName || '월드 정보 없음'))]
@@ -1614,24 +1610,14 @@ function App() {
                     {activeCharacters.length > 0 && (
                       <div className="character-filter-bar">
                         <label>
-                          <span>캐릭터 검색</span>
-                          <input
-                            aria-label="캐릭터 검색"
-                            type="search"
-                            value={characterSearch}
-                            onChange={(event) => setCharacterSearch(event.target.value)}
-                            placeholder="닉네임 또는 직업"
-                          />
-                        </label>
-                        <label>
                           <span>월드</span>
                           <select aria-label="월드 필터" value={characterWorldFilter} onChange={(event) => setCharacterWorldFilter(event.target.value)}>
                             <option value="">전체 월드</option>
                             {activeCharacterWorlds.map((worldName) => <option key={worldName} value={worldName}>{worldName}</option>)}
                           </select>
                         </label>
-                        {(characterSearch || characterWorldFilter) && (
-                          <button className="quiet-button" type="button" onClick={() => { setCharacterSearch(''); setCharacterWorldFilter(''); }}>
+                        {characterWorldFilter && (
+                          <button className="quiet-button" type="button" onClick={() => setCharacterWorldFilter('')}>
                             필터 초기화
                           </button>
                         )}
@@ -1728,7 +1714,7 @@ function App() {
                         </section>
                       )) : (
                         <div className="empty-state compact"><strong>검색 결과가 없습니다</strong><p>검색어나 월드 필터를 바꿔 보세요.</p></div>
-                      )
+                        )
                     ) : (
                       <div className="empty-state">
                         <span className="empty-icon">＋</span>

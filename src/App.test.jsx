@@ -398,7 +398,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .toEqual(['ocid-1', 'ocid-2']));
   fireEvent.click(screen.getByTitle('내 정보'));
   expect(screen.queryByRole('heading', { name: '실사용 캐릭터 2' })).toBeNull();
-  expect(screen.getByRole('searchbox', { name: '캐릭터 검색' })).toBeDefined();
+  expect(screen.queryByRole('searchbox', { name: '캐릭터 검색' })).toBeNull();
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
   expect(screen.queryByRole('button', { name: /최고레벨/ })).toBeNull();
@@ -413,10 +413,6 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .not.toContain('검은 마법사');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning img')).not.toBeNull();
 
-  fireEvent.change(screen.getByRole('searchbox', { name: '캐릭터 검색' }), { target: { value: '아잉' } });
-  expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
-  expect(screen.queryByRole('button', { name: /오잉느/ })).toBeNull();
-  fireEvent.change(screen.getByRole('searchbox', { name: '캐릭터 검색' }), { target: { value: '' } });
   fireEvent.change(screen.getByRole('combobox', { name: '월드 필터' }), { target: { value: '스카니아' } });
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.queryByRole('button', { name: /아잉느/ })).toBeNull();

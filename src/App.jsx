@@ -332,21 +332,31 @@ function limitBossKeysToWeeklyCap(keys) {
   });
 }
 
-function summarizeBossParty(party) {
+function summarizeBossParty(party, groupCharacters = []) {
   const boss = bossDetails(party.bossId);
   const members = party.members || [];
   const totalMultiplier = members.reduce((total, member) => total + (Number(member.multiplier) || 0), 0);
-  const matchingSchedules = members.flatMap((member) => (member.scheduler?.boss_contents || [])
-    .filter((item) => {
-      const option = scheduleBossOption(item);
-      return option.familyKey === boss.familyId && option.difficulty === boss.difficulty;
-    }));
+  const partyLeader = members[0];
+  const leaderCharacter = partyLeader
+    ? groupCharacters.find((character) => (
+      character.ocid === partyLeader.ocid
+      && (!partyLeader.ownerSub || character.ownerSub === partyLeader.ownerSub)
+    )) || partyLeader
+    : null;
+  const leaderBossSchedules = leaderCharacter?.scheduler?.boss_contents
+    || partyLeader?.scheduler?.boss_contents
+    || [];
+  const matchingSchedules = leaderBossSchedules.filter((item) => {
+    const option = scheduleBossOption(item);
+    return option.familyKey === boss.familyId && option.difficulty === boss.difficulty;
+  });
   const cleared = matchingSchedules.some((item) => item.complete_flag === true || item.complete_flag === 'true');
   return {
     totalMultiplier,
     ready: totalMultiplier >= 100,
     cleared,
-    statusLabel: cleared ? '클리어 확인' : matchingSchedules.length ? '미클리어' : '일정 확인 불가',
+    clearRecordAvailable: matchingSchedules.length > 0,
+    statusLabel: cleared ? '클리어' : '미클리어',
   };
 }
 
@@ -418,6 +428,7 @@ function App() {
   const [selectedBossFamilyId, setSelectedBossFamilyId] = useState('');
   const [selectedBossDifficultyId, setSelectedBossDifficultyId] = useState('');
   const [quickPartyBossId, setQuickPartyBossId] = useState('');
+  const [selectedQuickCharacterKey, setSelectedQuickCharacterKey] = useState('');
   const [activeBuilderPartyId, setActiveBuilderPartyId] = useState('');
   const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
   const [dragOverPartyId, setDragOverPartyId] = useState('');
@@ -725,6 +736,11 @@ function App() {
       return;
     }
     stageCharacterOnParty(character, targetParty.partyId);
+  }
+
+  function focusQuickParty(party) {
+    setFocusedPartyId(party.partyId);
+    setQuickPartyBossId(party.bossId);
   }
 
   function assignBossToCharacter(character, boss, partyId = null) {
@@ -1167,6 +1183,7 @@ function App() {
     setPartyDraft(null);
     setSelectedGroupId(groupId);
     setQuickPartyBossId('');
+    setSelectedQuickCharacterKey('');
     setShowGroupDeleteConfirmation(false);
     setSelectedBossFamilyId('');
     setSelectedBossDifficultyId('');
@@ -1403,15 +1420,44 @@ function App() {
         quickMultiplier: selectedQuickPartyBoss
           ? getCharacterBossMultiplier(character, selectedQuickPartyBoss.bossId)
           : 0,
+        quickRecommendation: selectedQuickPartyBoss
+          ? bossRecommendationForCharacter(
+            character,
+            multipliers.filter((entry) => (
+              (!entry.ownerSub || entry.ownerSub === character.ownerSub)
+              && entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+            )),
+            selectedQuickPartyBoss,
+          )
+          : null,
         assignedParty,
+        sameAccountCharacterAssigned: Boolean(focusedQuickParty && (focusedQuickParty.members || []).some((member) => (
+          member.ownerSub === character.ownerSub && member.ocid !== character.ocid
+        ))),
       };
     })
     .sort((left, right) => (
-      (selectedQuickPartyBoss ? right.quickMultiplier - left.quickMultiplier : 0)
+      (Number(Boolean(left.assignedParty)) - Number(Boolean(right.assignedParty)))
+      || (selectedQuickPartyBoss ? right.quickMultiplier - left.quickMultiplier : 0)
       || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
       || (Number(right.level) || 0) - (Number(left.level) || 0)
       || left.nickname.localeCompare(right.nickname, 'ko')
     ));
+  const selectedQuickCharacter = quickPartyCandidates.find((character) => (
+    `${character.ownerSub}:${character.ocid}` === selectedQuickCharacterKey
+  ));
+  const selectedQuickCharacterRecommendations = selectedQuickCharacter
+    ? recommendationsForCharacter(
+      selectedQuickCharacter,
+      multipliers.filter((entry) => (
+        (!entry.ownerSub || entry.ownerSub === selectedQuickCharacter.ownerSub)
+        && entry.nickname?.toLocaleLowerCase('ko') === selectedQuickCharacter.nickname.toLocaleLowerCase('ko')
+      )),
+    )
+    : [];
+  const selectedQuickRecommendedBossIds = new Set(
+    selectedQuickCharacterRecommendations.map(({ bossId }) => bossId),
+  );
   const selectedBossDetails = selectedBossOptions.find(({ bossId }) => bossId === selectedBossDifficultyId);
   const selectedFamilyParties = selectedBossFamily
     ? groupParties.filter(({ familyId, bossId }) => (
@@ -1488,6 +1534,7 @@ function App() {
       <header>
         <p className="eyebrow">PARTY QUICK MENU</p>
         <h2>보스 빠른 편성</h2>
+        <p className="group-boss-quick-group">{selectedGroup.name}</p>
         <p>난이도를 누르면 빈 파티가 추가됩니다.</p>
       </header>
       <div className="group-boss-family-list">
@@ -1511,11 +1558,12 @@ function App() {
                       disabled={busy === 'party-save'}
                       key={boss.bossId}
                       aria-pressed={quickPartyBossId === boss.bossId}
-                      aria-label={`${boss.difficultyLabel} ${boss.name} 파티 편성${partiesForBoss.length ? `, 파티 ${partiesForBoss.length}개` : ''}`}
-                      title={`${boss.difficultyLabel} ${boss.name}${partiesForBoss.length ? ` · 파티 ${partiesForBoss.length}개` : ''}`}
+                      aria-label={`${boss.difficultyLabel} ${boss.name} 파티 편성${selectedQuickRecommendedBossIds.has(boss.bossId) ? ', 추천 보스' : ''}${partiesForBoss.length ? `, 파티 ${partiesForBoss.length}개` : ''}`}
+                      title={`${boss.difficultyLabel} ${boss.name}${selectedQuickRecommendedBossIds.has(boss.bossId) ? ' · 선택 캐릭터 추천 보스' : ''}${partiesForBoss.length ? ` · 파티 ${partiesForBoss.length}개` : ''}`}
                       onClick={() => createEmptyBossParty(boss)}
                     >
                       {difficultyMarks[boss.difficulty] || boss.difficultyLabel.slice(0, 1)}
+                      {selectedQuickRecommendedBossIds.has(boss.bossId) && <i className="difficulty-star" aria-hidden="true">★</i>}
                       {partiesForBoss.length > 0 && <small>{partiesForBoss.length}</small>}
                     </button>
                   );
@@ -1525,6 +1573,22 @@ function App() {
           );
         })}
       </div>
+      <nav className="group-boss-quick-navigation" aria-label="그룹 관리">
+        <button type="button" aria-label="인원 관리" title={`인원 관리 · ${groupMembers.length}`} onClick={openGroupMembers}>
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          <span>{groupMembers.length}</span>
+        </button>
+        <button type="button" aria-label="그룹 설정" title="그룹 설정" onClick={() => setView('bosses')}>
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
+            <path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.7 1l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.7-1l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-2l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.7-1l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.7 1l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 2Z" />
+          </svg>
+        </button>
+      </nav>
     </aside>
   );
   const groupCharacterQuickMenu = selectedGroup && (
@@ -1538,29 +1602,43 @@ function App() {
         {quickPartyCandidates.length ? quickPartyCandidates.map((character) => {
           const canManage = character.ownerSub === account?.sub || selectedGroup.role === 'admin';
           const isAssigned = Boolean(character.assignedParty);
-          const assignmentBoss = isAssigned ? bossDetails(character.assignedParty.bossId) : null;
+          const sameAccountCharacterAssigned = !isAssigned && character.sameAccountCharacterAssigned;
+          const characterKey = `${character.ownerSub}:${character.ocid}`;
+          const isSelectedForHighlights = selectedQuickCharacterKey === characterKey;
           return (
             <article
-              className={`group-character-quick-card ${isAssigned ? 'already-assigned' : ''}`}
-              key={`${character.ownerSub}:${character.ocid}`}
-              draggable={canManage && !isAssigned}
+              className={`group-character-quick-card ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
+              key={characterKey}
+              draggable={canManage && !isAssigned && !sameAccountCharacterAssigned}
+              tabIndex={0}
+              title={isSelectedForHighlights ? '선택됨 · 왼쪽에 추천 보스 표시 중' : '선택하여 왼쪽에 추천 보스 표시'}
+              onClick={() => setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return;
+                event.preventDefault();
+                setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey);
+              }}
               onDragStart={(event) => startPartyMemberDrag(event, character)}
               onDragEnd={finishPartyMemberDrag}
             >
-              {character.image
-                ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
-                : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
+              <span className="group-character-quick-avatar">
+                {character.image
+                  ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
+                  : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
+              </span>
               <span className="group-character-quick-details">
                 <strong>{character.nickname}</strong>
                 <small>Lv. {character.level || '-'}</small>
-                {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}% 배율</b>}
-                {isAssigned && (
-                  <em>
-                    이미 편성 · {character.assignedParty.groupName || '다른 그룹'} · {assignmentBoss.difficultyLabel} {assignmentBoss.name}
-                  </em>
+                {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}%</b>}
+                {character.quickRecommendation && (
+                  <strong className={`group-character-quick-recommendation ${character.quickRecommendation.recommendedPartySize ? `party-size-${character.quickRecommendation.recommendedPartySize}` : 'impossible'}`}>
+                    {character.quickRecommendation.recommendedPartySize
+                      ? recommendationPartyLabel(character.quickRecommendation.recommendedPartySize)
+                      : '불가능'}
+                  </strong>
                 )}
               </span>
-              {selectedQuickPartyBoss && canManage && !isAssigned && (
+              {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
                 <button
                   className="primary-button"
                   type="button"
@@ -1570,6 +1648,18 @@ function App() {
                 >
                   파티에 추가
                 </button>
+              )}
+              {isAssigned && (
+                <em className="group-character-quick-assignment-note">
+                  {character.assignedParty.groupId === selectedGroupId
+                    ? '이미 그룹에 편성되어있습니다.'
+                    : '이미 다른 그룹에 편성되어있습니다.'}
+                </em>
+              )}
+              {sameAccountCharacterAssigned && (
+                <em className="group-character-quick-assignment-note">
+                  같은 계정의 캐릭터가 편성되어있습니다.
+                </em>
               )}
             </article>
           );
@@ -1684,11 +1774,6 @@ function App() {
               <p className="eyebrow">MAPLE / SCOUT WORKSPACE</p>
               <h1>{viewTitle}</h1>
             </div>
-            {account && view === 'group' && selectedGroup && (
-              <button className="primary-button" type="button" onClick={refreshMapleScouterData} disabled={!activeCharacters.length || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}>
-                {mapleScouterButtonLabel}
-              </button>
-            )}
           </div>
 
           {notice && <div className={`notice ${notice.type}`} role="status">{notice.text}</div>}
@@ -2166,20 +2251,6 @@ function App() {
                   )}
                   {selectedGroup && (
                     <>
-                      <section className="party-header">
-                        <div>
-                          <p className="eyebrow">GROUP BOSS PARTIES</p>
-                          <h2>{selectedGroup.name}</h2>
-                          <p>{selectedGroup.role === 'admin' ? '관리자' : '그룹 멤버'} · 참가 캐릭터 {groupCharacters.length}명</p>
-                        </div>
-                        <div className="group-main-actions">
-                          <button className="outline-button" type="button" onClick={openGroupMembers}>
-                            인원 관리 · {groupMembers.length}
-                          </button>
-                          <button className="outline-button" type="button" onClick={() => setView('bosses')}>그룹 설정</button>
-                        </div>
-                      </section>
-
                       <section id="group-party-builder" className="panel-section group-quick-party-builder">
                         <div className="section-heading">
                           <div><p className="eyebrow">PARTY BUILDER</p><h2>파티 빠른 편성</h2></div>
@@ -2207,7 +2278,7 @@ function App() {
                             <div className="group-main-party-grid">
                               {currentGroupParties.map((party) => {
                                 const config = bossDetails(party.bossId);
-                                const summary = summarizeBossParty(party);
+                                const summary = summarizeBossParty(party, groupCharacters);
                                 const members = party.members || [];
                                 const sameBossPartyNumber = currentGroupParties
                                   .filter(({ bossId }) => bossId === party.bossId)
@@ -2216,9 +2287,19 @@ function App() {
                                   || members.every(({ ownerSub }) => ownerSub === account?.sub);
                                 return (
                                   <article
-                                    className={`group-main-party-card ${focusedPartyId === party.partyId ? 'focused' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
+                                    className={`group-main-party-card ${summary.cleared ? 'boss-cleared' : 'boss-not-cleared'} ${focusedPartyId === party.partyId ? 'focused' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
                                     id={`group-party-${party.partyId}`}
                                     key={party.partyId}
+                                    onClick={(event) => {
+                                      if (event.target.closest('button')) return;
+                                      focusQuickParty(party);
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return;
+                                      event.preventDefault();
+                                      focusQuickParty(party);
+                                    }}
+                                    tabIndex={0}
                                     onDragOver={(event) => dragOverParty(event, party)}
                                     onDragLeave={(event) => {
                                       if (!event.currentTarget.contains(event.relatedTarget)) setDragOverPartyId('');
@@ -2278,19 +2359,30 @@ function App() {
                                     </div>
                                     <div className={`party-summary ${summary.ready ? 'ready' : ''} ${summary.cleared ? 'cleared' : ''}`}>
                                       <span>파티 배율 <strong>{summary.totalMultiplier.toFixed(1)}%</strong></span>
-                                      <span>{summary.cleared ? '클리어 완료' : summary.ready ? '클리어 가능' : `${Math.max(0, 100 - summary.totalMultiplier).toFixed(1)}% 더 필요`}</span>
+                                      <span>{summary.cleared
+                                        ? '클리어 완료'
+                                        : summary.ready
+                                          ? '클리어 가능'
+                                          : <><strong>{Math.max(0, 100 - summary.totalMultiplier).toFixed(1)}%</strong> 더 필요</>}</span>
                                     </div>
-                                    <button
-                                      className="group-main-party-open"
-                                      type="button"
-                                      aria-pressed={focusedPartyId === party.partyId}
-                                      onClick={() => {
-                                        setFocusedPartyId(party.partyId);
-                                        setQuickPartyBossId(party.bossId);
-                                      }}
+                                    <div
+                                      className="party-multiplier-progress"
+                                      role="progressbar"
+                                      aria-label={`${config.name} 파티 배율`}
+                                      aria-valuemin={0}
+                                      aria-valuemax={100}
+                                      aria-valuenow={Math.min(100, Math.max(0, summary.totalMultiplier))}
                                     >
-                                      이 파티에 캐릭터 편성
-                                    </button>
+                                      <span style={{ width: `${Math.min(100, Math.max(0, summary.totalMultiplier))}%` }} />
+                                    </div>
+                                    <span
+                                      className={`party-clear-status ${summary.cleared ? 'cleared' : 'not-cleared'}`}
+                                      title={summary.clearRecordAvailable
+                                        ? '첫 번째 파티원의 보스 완료 기록 기준'
+                                        : '첫 번째 파티원에게 이 보스의 완료 기록이 없습니다.'}
+                                    >
+                                      {summary.statusLabel}
+                                    </span>
                                   </article>
                                 );
                               })}
@@ -2638,7 +2730,7 @@ function App() {
                                       <div className="builder-party-list">
                                         {selectedDifficultyParties.map((party) => {
                                           const config = bossDetails(party.bossId);
-                                          const summary = summarizeBossParty(party);
+                                          const summary = summarizeBossParty(party, groupCharacters);
                                           const members = party.members || [];
                                           const icon = bossImageFor(party.bossId);
                                           return (

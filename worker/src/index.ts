@@ -999,8 +999,10 @@ async function createGoogleSession(env: Env, origin: string, body: Record<string
     throw new ApiError(400, 'code와 remember 값을 확인해 주세요.');
   }
   const code = stringField(body, 'code', 4096);
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-    throw new ApiError(500, 'Google OAuth Worker 설정이 필요합니다.');
+  const missing = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SESSION_ENCRYPTION_KEY']
+    .filter((name) => !env[name as keyof Env]);
+  if (missing.length) {
+    throw new ApiError(500, `Google OAuth Worker 설정이 필요합니다. 누락된 값: ${missing.join(', ')}`);
   }
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -1013,7 +1015,11 @@ async function createGoogleSession(env: Env, origin: string, body: Record<string
       redirect_uri: origin,
     }),
   });
-  if (!tokenResponse.ok) throw new ApiError(401, 'Google 로그인 코드를 확인할 수 없습니다. 다시 로그인해 주세요.');
+  if (!tokenResponse.ok) {
+    const detail = await tokenResponse.json().catch(() => ({})) as { error?: string; error_description?: string };
+    const reason = [detail.error, detail.error_description].filter(Boolean).join(': ');
+    throw new ApiError(401, `Google 로그인 코드를 확인할 수 없습니다. 다시 로그인해 주세요.${reason ? ` (${reason})` : ''}`);
+  }
   const tokens = await tokenResponse.json() as {
     access_token?: string;
     refresh_token?: string;

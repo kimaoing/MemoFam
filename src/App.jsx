@@ -1803,7 +1803,9 @@ function App() {
                             + weeklyBosses.filter((item) => isIncomplete(item, true)).length
                             + monthlyBosses.filter((item) => isIncomplete(item, true)).length;
                           const recommendedBossIds = new Set(
-                            recommendationsForCharacter(character, multipliers).map(({ bossId }) => bossId),
+                            recommendationsForCharacter(character, accountMultipliers.filter((entry) => (
+                              entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+                            ))).map(({ bossId }) => bossId),
                           );
                           const scheduleBossGroups = [];
                           for (const entry of availableBosses) {
@@ -1903,7 +1905,6 @@ function App() {
                                                       onChange={(event) => updateScheduleBossSelection(character.ocid, option, event.target.checked, selectedBossKeys)}
                                                     />
                                                     <span aria-hidden="true">{difficultySymbol}</span>
-                                                    {selected && <i className="difficulty-check" aria-hidden="true">✓</i>}
                                                     {recommendedBossIds.has(option.bossId) && <i className="difficulty-star" aria-hidden="true">★</i>}
                                                   </label>
                                                 );

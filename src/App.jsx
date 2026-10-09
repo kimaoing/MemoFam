@@ -1017,7 +1017,7 @@ function App() {
   }
 
   async function syncCharacters(event) {
-    event.preventDefault();
+    event?.preventDefault();
     if (!nexonKey.trim()) return;
     setBusy('sync');
     setNotice(null);
@@ -1753,7 +1753,16 @@ function App() {
                   <section className="panel-section schedule-section my-schedule-section">
                     <div className="section-heading">
                       <div><p className="eyebrow">MY SCHEDULE</p><h2>내 캐릭터 미완료 일정</h2></div>
-                      <span className="updated-count">그룹과 무관한 내 일정</span>
+                      <button
+                        className="icon-refresh-button"
+                        type="button"
+                        onClick={() => syncCharacters()}
+                        disabled={busy === 'sync' || !nexonKey.trim()}
+                        aria-label="일정 새로고침"
+                        title={nexonKey.trim() ? '일정 새로고침' : '계정 설정에서 Nexon API 키를 먼저 입력해 주세요'}
+                      >
+                        <span className={busy === 'sync' ? 'spinning' : ''} aria-hidden="true">↻</span>
+                      </button>
                     </div>
                     {!activeCharacters.length ? (
                       <div className="empty-state compact"><strong>실사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 일정 관리할 캐릭터를 선택하세요.</p></div>
@@ -1780,7 +1789,9 @@ function App() {
                             : registeredBossKeys(scheduler.boss_contents || []);
                           const selectedBosses = availableBosses
                             .filter(({ option }) => selectedBossKeys.includes(option.key))
-                            .sort((left, right) => Number(isIncomplete(right.item, true)) - Number(isIncomplete(left.item, true)));
+                            .sort((left, right) => Number(isIncomplete(right.item, true)) - Number(isIncomplete(left.item, true))
+                              || bossFamilyOrder(left.option.familyKey) - bossFamilyOrder(right.option.familyKey)
+                              || (bossFamilyTopPrice[right.option.familyKey] || 0) - (bossFamilyTopPrice[left.option.familyKey] || 0));
                           const weeklyBosses = selectedBosses
                             .filter(({ option }) => option.cycle === 'weekly')
                             .map(({ item }) => item);
@@ -1921,7 +1932,21 @@ function App() {
                                   <section className="schedule-task-group" key={category.id} aria-label={`${character.nickname} ${category.label} 일정`}>
                                     <h3><span aria-hidden="true">{category.icon}</span>{category.label}<span>{category.items.length}</span></h3>
                                     <div className="schedule-tasks">
-                                      {category.items.length ? category.items.map((item, index) => (
+                                      {category.items.length && category.id.includes('bosses') ? category.items.map((item, index) => {
+                                        const option = scheduleBossOption(item);
+                                        const pending = isIncomplete(item, true);
+                                        const image = option.bossId ? bossImageFor(option.bossId) : null;
+                                        return (
+                                          <span className={`boss-card ${pending ? 'pending' : 'completed'}`} key={`${option.key}-${index}`}>
+                                            {image ? <img src={image} alt="" loading="lazy" /> : <span className="boss-placeholder" aria-hidden="true">◇</span>}
+                                            <span className="boss-card-info">
+                                              <strong>{option.name || item.content_name}</strong>
+                                              <em className={`boss-card-difficulty difficulty-${option.difficulty}`}>{option.difficultyLabel || '-'}</em>
+                                            </span>
+                                            {!pending && <b className="boss-card-done">✓ 완료</b>}
+                                          </span>
+                                        );
+                                      }) : category.items.length ? category.items.map((item, index) => (
                                         <span className={`task-chip ${isIncomplete(item, category.id.includes('bosses')) ? 'pending' : 'completed'} task-${category.id}`} key={`${item.content_name}-${item.difficulty || ''}-${index}`}>
                                           <span className="task-chip-icon" aria-hidden="true">{category.icon}</span>
                                           {category.id.includes('bosses')

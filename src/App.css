@@ -792,3 +792,32 @@ button:disabled { cursor: wait; opacity: .65; }
 html[data-theme='dark'] { background: #171922; color-scheme: dark; }
 html[data-theme='light'] { background: #f4f5f8; color-scheme: light; }
 html[data-theme='light'] body { background: #f4f5f8; }
+
+.icon-refresh-button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid #d9dce5; border-radius: 9px; background: #fff; color: #4a5167; font-size: 21px; cursor: pointer; }
+.icon-refresh-button:hover:not(:disabled) { background: #eef0fa; color: #3f55c4; }
+.icon-refresh-button:disabled { opacity: .45; cursor: not-allowed; }
+.icon-refresh-button .spinning { display: inline-block; animation: icon-spin .8s linear infinite; }
+@keyframes icon-spin { to { transform: rotate(360deg); } }
+.schedule-tasks:has(.boss-card) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.boss-card { position: relative; display: flex; min-width: 0; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid #f0c9a8; border-radius: 10px; background: #fff3e7; color: #6b3b13; }
+.boss-card > img, .boss-card > .boss-placeholder { width: 44px; height: 44px; flex: 0 0 44px; object-fit: contain; }
+.boss-card-info { display: grid; min-width: 0; gap: 4px; }
+.boss-card-info strong { overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.boss-card-difficulty { justify-self: start; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-style: normal; font-weight: 800; }
+.boss-card-difficulty.difficulty-easy { background: #e3e5ea; color: #636a78; }
+.boss-card-difficulty.difficulty-normal { background: #e5edff; color: #4766b3; }
+.boss-card-difficulty.difficulty-hard { background: #ffe5e7; color: #b7505b; }
+.boss-card-difficulty.difficulty-chaos { background: #fff0dc; color: #a96b21; }
+.boss-card-difficulty.difficulty-extreme { background: #262932; color: #f1f2f6; }
+.boss-card.completed { border-color: #86cfa3; background: #e4f6ea; color: #24633e; opacity: .85; }
+.boss-card-done { position: absolute; top: 6px; right: 8px; color: #23995a; font-size: 11px; }
+.app-shell[data-theme='dark'] .icon-refresh-button { border-color: #414657; background: #262a37; color: #d5d8e3; }
+.app-shell[data-theme='dark'] .icon-refresh-button:hover:not(:disabled) { background: #31364a; color: #fff; }
+.app-shell[data-theme='dark'] .boss-card { border-color: #6b4a2c; background: #3a2c20; color: #ffd9b3; }
+.app-shell[data-theme='dark'] .boss-card.completed { border-color: #2f7a4d; background: #1d3a2a; color: #a9e5bd; }
+.app-shell[data-theme='dark'] .boss-card-done { color: #6fe0a0; }
+.app-shell[data-theme='dark'] .boss-card-difficulty.difficulty-easy { background: #3a3e4a; color: #c9ccd6; }
+.app-shell[data-theme='dark'] .boss-card-difficulty.difficulty-normal { background: #222f50; color: #b9cbff; }
+.app-shell[data-theme='dark'] .boss-card-difficulty.difficulty-hard { background: #48292f; color: #ffb8c0; }
+.app-shell[data-theme='dark'] .boss-card-difficulty.difficulty-chaos { background: #48351f; color: #ffd39b; }
+.app-shell[data-theme='dark'] .boss-card-difficulty.difficulty-extreme { background: #07080b; color: #f4f5f9; }

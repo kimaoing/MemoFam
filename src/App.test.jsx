@@ -450,8 +450,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .filter((text) => text.startsWith('주간 보스')))
     .toEqual(['주간 보스 12/12 · 월간 1종', '주간 보스 0/12 · 월간 0종']);
   expect(screen.getByRole('checkbox', { name: '오잉느 보스 일정 노말 테스트 보스 12 표시' }).disabled).toBe(true);
-  expect(screen.getByText('하드 검은 마법사', { selector: '.task-chip.completed' })).toBeDefined();
-  expect(screen.getByText('카오스 감시자 칼로스', { selector: '.task-chip' })).toBeDefined();
+  const completedBossCard = screen.getByText('검은 마법사', { selector: '.boss-card.completed strong' }).closest('.boss-card');
+  expect(completedBossCard.textContent).toContain('하드');
+  expect(completedBossCard.textContent).toContain('완료');
+  expect(screen.getByText('감시자 칼로스', { selector: '.boss-card.pending strong' }).closest('.boss-card').textContent).toContain('카오스');
 
   fireEvent.click(screen.getByRole('button', { name: /아잉느/ }));
   fireEvent.click(screen.getByTitle('Test group'));

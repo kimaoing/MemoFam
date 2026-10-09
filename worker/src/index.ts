@@ -366,6 +366,210 @@ async function listMultipliers(env: Env, groupId: string, principal: GooglePrinc
   return json({ multipliers: result.results || [] });
 }
 
+async function createGroupInvite(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
+  const group = await requireGroupAdmin(env, groupId, principal);
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+  const tokenHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  const hash = [...new Uint8Array(tokenHash)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare(`
+    INSERT INTO group_invites (token_hash, group_id, created_by_sub, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(hash, group.id, principal.sub, createdAt.toISOString(), expiresAt).run();
+  return json({ token, expiresAt }, 201);
+}
+
+async function acceptGroupInvite(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  if (Object.keys(body).some((key) => key !== 'token')) throw new ApiError(400, '초대 토큰만 요청할 수 있습니다.');
+  const token = stringField(body, 'token', 128);
+  if (!/^[a-f0-9]{64}$/i.test(token)) throw new ApiError(400, '초대 링크가 올바르지 않습니다.');
+  const tokenHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  const hash = [...new Uint8Array(tokenHash)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  const invite = await env.DB.prepare(`
+    SELECT i.group_id AS groupId, i.expires_at AS expiresAt, g.name
+    FROM group_invites i JOIN groups g ON g.id = i.group_id
+    WHERE i.token_hash = ?
+  `).bind(hash).first<{ groupId: string; expiresAt: string; name: string }>();
+  if (!invite) throw new ApiError(404, '초대 링크를 찾을 수 없습니다.');
+  if (invite.expiresAt <= new Date().toISOString()) throw new ApiError(410, '초대 링크가 만료되었습니다.');
+  await env.DB.prepare(`
+    INSERT INTO group_members (group_id, email, role, joined_at)
+    VALUES (?, ?, 'member', ?)
+    ON CONFLICT (group_id, email) DO NOTHING
+  `).bind(invite.groupId, principal.email, new Date().toISOString()).run();
+  return json({ groupId: invite.groupId, groupName: invite.name, joined: true });
+}
+
+async function listGroupCharacters(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  const result = await env.DB.prepare(`
+    SELECT gc.google_sub AS ownerSub, gc.owner_email AS ownerEmail,
+      c.nickname, c.ocid, c.world_name AS worldName, c.character_class AS characterClass,
+      c.character_level AS level, c.character_image AS image, c.scheduler_json AS schedulerJson,
+      c.boss380_hexa_score AS boss380HexaScore,
+      p.boss_id AS bossId, p.family_id AS familyId
+    FROM group_characters gc
+    JOIN characters c ON c.google_sub = gc.google_sub AND lower(c.nickname) = lower(gc.nickname)
+    LEFT JOIN group_boss_participants p
+      ON p.group_id = gc.group_id AND p.google_sub = gc.google_sub AND lower(p.nickname) = lower(gc.nickname)
+    WHERE gc.group_id = ?
+    ORDER BY c.character_level DESC, c.nickname COLLATE NOCASE
+  `).bind(group.id).all<{
+    ownerSub: string;
+    ownerEmail: string;
+    nickname: string;
+    ocid: string;
+    worldName: string;
+    characterClass: string;
+    level: number;
+    image: string;
+    schedulerJson: string;
+    boss380HexaScore: number | null;
+    bossId: string | null;
+    familyId: string | null;
+  }>();
+  const characters = new Map<string, Record<string, unknown> & { bosses: Array<{ bossId: string; familyId: string }> }>();
+  for (const row of result.results || []) {
+    const key = `${row.ownerSub}:${row.ocid}`;
+    let character = characters.get(key);
+    if (!character) {
+      const { schedulerJson, bossId: _bossId, familyId: _familyId, ...fields } = row;
+      character = { ...fields, scheduler: JSON.parse(schedulerJson || '{}'), bosses: [] };
+      characters.set(key, character);
+    }
+    if (row.bossId && row.familyId) character.bosses.push({ bossId: row.bossId, familyId: row.familyId });
+  }
+  return json({ characters: [...characters.values()] });
+}
+
+async function addGroupCharacter(env: Env, groupId: string, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  if (Object.keys(body).some((key) => key !== 'ocid')) throw new ApiError(400, 'ocid만 요청할 수 있습니다.');
+  const ocid = stringField(body, 'ocid', 80);
+  const character = await env.DB.prepare(`
+    SELECT nickname, character_level AS level FROM characters
+    WHERE google_sub = ? AND ocid = ?
+  `).bind(principal.sub, ocid).first<{ nickname: string; level: number }>();
+  if (!character) throw new ApiError(403, '본인이 인증한 캐릭터만 그룹에 추가할 수 있습니다.');
+  if (character.level < 260) throw new ApiError(400, '260레벨 이상 캐릭터만 그룹에 추가할 수 있습니다.');
+  await env.DB.prepare(`
+    INSERT INTO group_characters (group_id, google_sub, owner_email, nickname, added_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (group_id, google_sub, nickname) DO NOTHING
+  `).bind(group.id, principal.sub, principal.email, character.nickname, new Date().toISOString()).run();
+  return json({ nickname: character.nickname, ocid, added: true }, 201);
+}
+
+async function removeGroupCharacter(env: Env, groupId: string, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  if (Object.keys(body).some((key) => key !== 'ocid')) throw new ApiError(400, 'ocid만 요청할 수 있습니다.');
+  const ocid = stringField(body, 'ocid', 80);
+  const character = await env.DB.prepare(`
+    SELECT gc.google_sub AS ownerSub, gc.nickname
+    FROM group_characters gc JOIN characters c
+      ON c.google_sub = gc.google_sub AND lower(c.nickname) = lower(gc.nickname)
+    WHERE gc.group_id = ? AND c.ocid = ?
+  `).bind(group.id, ocid).first<{ ownerSub: string; nickname: string }>();
+  if (!character) return json({ ocid, removed: false });
+  if (character.ownerSub !== principal.sub && group.role !== 'admin') {
+    throw new ApiError(403, '본인 캐릭터 또는 그룹 관리자만 제거할 수 있습니다.');
+  }
+  await env.DB.prepare(`
+    DELETE FROM group_characters WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
+  `).bind(group.id, character.ownerSub, character.nickname).run();
+  return json({ ocid, removed: true });
+}
+
+function bossFamilyId(bossId: string): string {
+  const match = bossId.match(/^(?:easy|normal|hard|extreme|chaos)_(.+)$/i);
+  if (!match) throw new ApiError(400, '난이도와 보스 ID를 확인해 주세요.');
+  return match[1].toLowerCase();
+}
+
+function bossDifficultyRank(bossId: string): number {
+  const difficulty = bossId.split('_', 1)[0].toLowerCase();
+  return ({ easy: 1, normal: 2, hard: 3, chaos: 3, extreme: 4 } as Record<string, number>)[difficulty] || 0;
+}
+
+async function addGroupBossParticipant(
+  env: Env,
+  groupId: string,
+  ocid: string,
+  principal: GooglePrincipal,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  if (Object.keys(body).some((key) => key !== 'bossId')) throw new ApiError(400, 'bossId만 요청할 수 있습니다.');
+  const bossId = stringField(body, 'bossId', 80);
+  if (!bossIdPattern.test(bossId)) throw new ApiError(400, 'bossId 형식이 올바르지 않습니다.');
+  const familyId = bossFamilyId(bossId);
+  const character = await env.DB.prepare(`
+    SELECT gc.google_sub AS ownerSub, gc.nickname
+    FROM group_characters gc JOIN characters c
+      ON c.google_sub = gc.google_sub AND lower(c.nickname) = lower(gc.nickname)
+    WHERE gc.group_id = ? AND c.ocid = ?
+  `).bind(group.id, ocid).first<{ ownerSub: string; nickname: string }>();
+  if (!character) throw new ApiError(404, '그룹에 등록된 캐릭터가 아닙니다.');
+  if (character.ownerSub !== principal.sub && group.role !== 'admin') {
+    throw new ApiError(403, '본인 캐릭터 또는 그룹 관리자만 파티를 편성할 수 있습니다.');
+  }
+  const existing = await env.DB.prepare(`
+    SELECT boss_id AS bossId FROM group_boss_participants
+    WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?) AND family_id = ?
+  `).bind(group.id, character.ownerSub, character.nickname, familyId).first<{ bossId: string }>();
+  if (existing?.bossId === bossId) return json({ bossId, familyId, added: false });
+  if (existing && bossDifficultyRank(bossId) < bossDifficultyRank(existing.bossId)) {
+    throw new ApiError(400, '더 높은 보상 난이도가 이미 파티에 편성되어 있습니다.');
+  }
+  if (!existing) {
+    const count = await env.DB.prepare(`
+      SELECT COUNT(*) AS count FROM group_boss_participants
+      WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
+    `).bind(group.id, character.ownerSub, character.nickname).first<{ count: number }>();
+    if ((count?.count || 0) >= 12) throw new ApiError(400, '캐릭터 한 명은 최대 12개 보스 파티에만 참가할 수 있습니다.');
+  }
+  await env.DB.batch([
+    env.DB.prepare(`
+      DELETE FROM group_boss_participants
+      WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?) AND family_id = ?
+    `).bind(group.id, character.ownerSub, character.nickname, familyId),
+    env.DB.prepare(`
+      INSERT INTO group_boss_participants (group_id, google_sub, nickname, boss_id, family_id, joined_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(group.id, character.ownerSub, character.nickname, bossId, familyId, new Date().toISOString()),
+  ]);
+  return json({ bossId, familyId, replacedBossId: existing?.bossId || null, added: true }, existing ? 200 : 201);
+}
+
+async function removeGroupBossParticipant(
+  env: Env,
+  groupId: string,
+  ocid: string,
+  principal: GooglePrincipal,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const group = await getGroup(env, groupId, principal.email);
+  if (Object.keys(body).some((key) => key !== 'bossId')) throw new ApiError(400, 'bossId만 요청할 수 있습니다.');
+  const bossId = stringField(body, 'bossId', 80);
+  const character = await env.DB.prepare(`
+    SELECT gc.google_sub AS ownerSub, gc.nickname
+    FROM group_characters gc JOIN characters c
+      ON c.google_sub = gc.google_sub AND lower(c.nickname) = lower(gc.nickname)
+    WHERE gc.group_id = ? AND c.ocid = ?
+  `).bind(group.id, ocid).first<{ ownerSub: string; nickname: string }>();
+  if (!character) throw new ApiError(404, '그룹에 등록된 캐릭터가 아닙니다.');
+  if (character.ownerSub !== principal.sub && group.role !== 'admin') {
+    throw new ApiError(403, '본인 캐릭터 또는 그룹 관리자만 파티를 편성할 수 있습니다.');
+  }
+  await env.DB.prepare(`
+    DELETE FROM group_boss_participants
+    WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?) AND boss_id = ?
+  `).bind(group.id, character.ownerSub, character.nickname, bossId).run();
+  return json({ bossId, removed: true });
+}
+
 async function importMapleScouterData(
   env: Env,
   principal: GooglePrincipal,
@@ -423,12 +627,7 @@ async function importMapleScouterData(
 
   let acceptedMultipliers = importedMultipliers;
   if (groupId) {
-    const group = await getGroup(env, groupId, principal.email);
-    const groupBossIds = new Set((await getBossIds(env, group.id)).map((bossId) => bossId.toLowerCase()));
-    acceptedMultipliers = importedMultipliers.filter(({ bossId }) => groupBossIds.has(bossId));
-    if (importedMultipliers.length && !acceptedMultipliers.length) {
-      throw new ApiError(400, '가져온 보스와 일치하는 그룹 등록 보스가 없습니다.');
-    }
+    await getGroup(env, groupId, principal.email);
   }
 
   const updatedAt = new Date().toISOString();
@@ -464,6 +663,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (path[0] !== 'api') throw new ApiError(404, '요청한 API를 찾을 수 없습니다.');
 
   const principal = await authenticate(request);
+  if (request.method === 'POST' && path.length === 3 && path[1] === 'group-invites' && path[2] === 'accept') {
+    return acceptGroupInvite(env, principal, await readBody(request));
+  }
   if (request.method === 'GET' && path.length === 2 && path[1] === 'groups') return listGroups(env, principal);
   if (request.method === 'GET' && path.length === 2 && path[1] === 'characters') return listCharacters(env, principal);
   if (request.method === 'POST' && path.length === 3 && path[1] === 'characters' && path[2] === 'maplescouter-scores') {
@@ -480,6 +682,24 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (path.length >= 3 && path[1] === 'groups') {
     const groupId = path[2];
+    if (path.length === 4 && path[3] === 'invites' && request.method === 'POST') {
+      return createGroupInvite(env, groupId, principal);
+    }
+    if (path.length === 4 && path[3] === 'characters' && request.method === 'GET') {
+      return listGroupCharacters(env, groupId, principal);
+    }
+    if (path.length === 4 && path[3] === 'characters' && request.method === 'POST') {
+      return addGroupCharacter(env, groupId, principal, await readBody(request));
+    }
+    if (path.length === 4 && path[3] === 'characters' && request.method === 'DELETE') {
+      return removeGroupCharacter(env, groupId, principal, await readBody(request));
+    }
+    if (path.length === 5 && path[3] === 'party-characters' && request.method === 'POST') {
+      return addGroupBossParticipant(env, groupId, path[4], principal, await readBody(request));
+    }
+    if (path.length === 5 && path[3] === 'party-characters' && request.method === 'DELETE') {
+      return removeGroupBossParticipant(env, groupId, path[4], principal, await readBody(request));
+    }
     if (path.length === 4 && path[3] === 'members' && request.method === 'POST') {
       return addGroupMember(env, groupId, principal, await readBody(request));
     }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import { workerRequest } from './workerApi';
+import bossRecommendationSettings from './boss-recommendations.json';
 
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const workerApiUrl = import.meta.env.VITE_WORKER_API_URL;
@@ -10,6 +11,7 @@ const extensionCheckType = 'maple-scout/extension-check';
 const extensionStatusType = 'maple-scout/extension-status';
 const rememberLoginKey = 'maple-scout-remember-login';
 const themeKey = 'maple-scout-theme';
+const scheduleNotificationKeyPrefix = 'maple-scout-schedule-notifications:';
 const activeCharactersKeyPrefix = 'maple-scout-active-characters:';
 const nexonApiKeyCookie = 'maple-scout-nexon-api-key';
 const nexonApiKeyCookieMaxAge = 60 * 60 * 24 * 30;
@@ -115,6 +117,49 @@ function readActiveCharacterIds(email, characters) {
   }
 }
 
+function recommendationsForCharacter(character, multipliers) {
+  const multiplierByBoss = new Map();
+  for (const entry of multipliers) {
+    if (entry.nickname?.toLocaleLowerCase('ko') !== character.nickname.toLocaleLowerCase('ko')) continue;
+    const value = Number(entry.multiplier);
+    const key = entry.bossId.toLowerCase();
+    multiplierByBoss.set(key, Math.max(value, multiplierByBoss.get(key) || 0));
+  }
+  const bestByFamily = new Map();
+  for (const boss of bossRecommendationSettings.bosses) {
+    const multiplier = multiplierByBoss.get(boss.bossId.toLowerCase());
+    if (!Number.isFinite(multiplier) || multiplier < boss.minimumMultiplier) continue;
+    const candidate = { ...boss, multiplier };
+    const current = bestByFamily.get(boss.familyId);
+    if (!current || candidate.rewardTier > current.rewardTier
+      || (candidate.rewardTier === current.rewardTier && candidate.multiplier > current.multiplier)) {
+      bestByFamily.set(boss.familyId, candidate);
+    }
+  }
+  return [...bestByFamily.values()]
+    .sort((left, right) => right.rewardTier - left.rewardTier
+      || right.multiplier - left.multiplier
+      || left.name.localeCompare(right.name, 'ko'))
+    .slice(0, bossRecommendationSettings.recommendationLimit);
+}
+
+function bossDetails(bossId) {
+  return bossRecommendationSettings.bosses.find((boss) => boss.bossId.toLowerCase() === bossId.toLowerCase())
+    || { bossId, name: bossId, difficultyLabel: '', rewardTier: 0, recommendedPartySize: 6 };
+}
+
+function difficultyRewardRank(bossId) {
+  return bossDetails(bossId).rewardTier;
+}
+
+function readScheduleNotificationPreferences(email) {
+  try {
+    return JSON.parse(window.localStorage.getItem(`${scheduleNotificationKeyPrefix}${email.toLowerCase()}`) || '{}');
+  } catch {
+    return {};
+  }
+}
+
 function groupCharactersByWorld(characters) {
   const getScore = (character) => {
     const score = character.boss380HexaScore;
@@ -161,12 +206,17 @@ function App() {
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
   const [groups, setGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
-  const [bossIds, setBossIds] = useState([]);
   const [multipliers, setMultipliers] = useState([]);
+  const [groupCharacters, setGroupCharacters] = useState([]);
+  const [allGroupCharacters, setAllGroupCharacters] = useState([]);
+  const [allGroupMultipliers, setAllGroupMultipliers] = useState([]);
+  const [inviteLink, setInviteLink] = useState('');
+  const [scheduleNotificationPreferences, setScheduleNotificationPreferences] = useState({});
+  const [notificationPermission, setNotificationPermission] = useState(() => (
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+  ));
   const [nexonKey, setNexonKey] = useState(readNexonApiKeyCookie);
   const [newGroupName, setNewGroupName] = useState('');
-  const [newBossId, setNewBossId] = useState('');
-  const [memberEmail, setMemberEmail] = useState('');
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
   const [mapleScouterProgress, setMapleScouterProgress] = useState(null);
@@ -196,6 +246,32 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!account?.email || notificationPermission !== 'granted') return;
+    for (const character of activeCharacters) {
+      const preferences = scheduleNotificationPreferences[character.ocid] || {};
+      const scheduler = character.scheduler || {};
+      const categories = [
+        { key: 'daily', items: (scheduler.daily_contents || []).filter((item) => isIncomplete(item)) },
+        { key: 'weekly', items: (scheduler.weekly_contents || []).filter((item) => isIncomplete(item)) },
+        { key: 'bosses', items: (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true)) },
+      ];
+      for (const category of categories) {
+        if (!preferences[category.key] || !category.items.length) continue;
+        const notifyKey = `maple-scout-notified:${account.email.toLowerCase()}:${character.ocid}:${category.key}:${scheduler.date || 'unknown'}`;
+        try {
+          if (window.localStorage.getItem(notifyKey)) continue;
+          window.localStorage.setItem(notifyKey, 'true');
+          const labels = category.items.slice(0, 3).map((item) => item.content_name).join(', ');
+          const remaining = category.items.length > 3 ? ` 외 ${category.items.length - 3}개` : '';
+          new Notification(`${character.nickname} 미완료 일정`, { body: `${labels}${remaining}`, tag: notifyKey });
+        } catch {
+          setNotice({ type: 'error', text: '브라우저 알림을 표시하지 못했습니다.' });
+        }
+      }
+    }
+  }, [account, activeCharacterIds, characters, notificationPermission, scheduleNotificationPreferences]);
+
+  useEffect(() => {
     function receiveMapleScouterResult(event) {
       if (event.origin !== mapleScouterOrigin || event.source !== mapleScouterPopup.current) return;
       const request = mapleScouterRequest.current;
@@ -220,16 +296,203 @@ function App() {
 
   async function loadGroupData(token, groupId) {
     if (!groupId) {
-      setBossIds([]);
       setMultipliers([]);
+      setGroupCharacters([]);
+      setInviteLink('');
       return;
     }
-    const [bossResult, multiplierResult] = await Promise.all([
-      workerRequest(token, `/api/groups/${encodeURIComponent(groupId)}/bosses`),
+    const [multiplierResult, characterResult] = await Promise.all([
       workerRequest(token, `/api/groups/${encodeURIComponent(groupId)}/multipliers`),
+      workerRequest(token, `/api/groups/${encodeURIComponent(groupId)}/characters`),
     ]);
-    setBossIds(bossResult.bossIds);
     setMultipliers(multiplierResult.multipliers);
+    setGroupCharacters(characterResult.characters || []);
+  }
+
+  async function loadAllGroupPartyData(token, groupsToLoad = groups) {
+    const results = await Promise.all(groupsToLoad.map(async (group) => {
+      const [characterResult, multiplierResult] = await Promise.all([
+        workerRequest(token, `/api/groups/${encodeURIComponent(group.id)}/characters`),
+        workerRequest(token, `/api/groups/${encodeURIComponent(group.id)}/multipliers`),
+      ]);
+      return {
+        groupId: group.id,
+        characters: characterResult.characters || [],
+        multipliers: multiplierResult.multipliers || [],
+      };
+    }));
+    setAllGroupCharacters(results.flatMap(({ groupId, characters: groupRoster }) => (
+      groupRoster.map((character) => ({ ...character, groupId }))
+    )));
+    setAllGroupMultipliers(results.flatMap(({ multipliers: groupRows }) => groupRows));
+  }
+
+  async function createGroupInvite() {
+    if (!selectedGroupId) return;
+    setBusy('invite');
+    try {
+      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/invites`, { method: 'POST' });
+      const inviteUrl = new URL(window.location.pathname, window.location.origin);
+      inviteUrl.searchParams.set('invite', result.token);
+      setInviteLink(inviteUrl.toString());
+      setNotice({ type: 'success', text: `초대 링크를 만들었습니다. ${new Date(result.expiresAt).toLocaleString('ko-KR')}까지 유효합니다.` });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function copyGroupInvite() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setNotice({ type: 'success', text: '그룹 초대 링크를 복사했습니다.' });
+    } catch {
+      setNotice({ type: 'error', text: '링크 복사에 실패했습니다. 링크를 선택해 직접 복사해 주세요.' });
+    }
+  }
+
+  async function addCharacterToGroup(ocid) {
+    try {
+      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/characters`, {
+        method: 'POST',
+        body: JSON.stringify({ ocid }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+      setNotice({ type: 'success', text: '캐릭터를 그룹 로스터에 추가했습니다.' });
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function removeCharacterFromGroup(character) {
+    try {
+      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/characters`, {
+        method: 'DELETE',
+        body: JSON.stringify({ ocid: character.ocid }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function assignBossToCharacter(character, boss) {
+    setBusy(`party:${character.ocid}:${boss.bossId}`);
+    try {
+      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/party-characters/${encodeURIComponent(character.ocid)}`, {
+        method: 'POST',
+        body: JSON.stringify({ bossId: boss.bossId }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+      setNotice({
+        type: 'success',
+        text: result.replacedBossId
+          ? `${result.replacedBossId} 대신 ${boss.difficultyLabel} ${boss.name}으로 난이도를 변경했습니다.`
+          : `${boss.difficultyLabel} ${boss.name} 파티에 배정했습니다.`,
+      });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function unassignBossFromCharacter(character, bossId) {
+    try {
+      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/party-characters/${encodeURIComponent(character.ocid)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ bossId }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  function updateScheduleNotificationPreference(ocid, category, enabled) {
+    const next = {
+      ...scheduleNotificationPreferences,
+      [ocid]: { ...scheduleNotificationPreferences[ocid], [category]: enabled },
+    };
+    setScheduleNotificationPreferences(next);
+    if (enabled && notificationPermission === 'default') {
+      void requestScheduleNotificationPermission();
+    }
+    if (account?.email) {
+      try {
+        window.localStorage.setItem(`${scheduleNotificationKeyPrefix}${account.email.toLowerCase()}`, JSON.stringify(next));
+      } catch {
+        setNotice({ type: 'error', text: '일정 알림 설정을 저장하지 못했습니다.' });
+      }
+    }
+  }
+
+  async function requestScheduleNotificationPermission() {
+    if (!('Notification' in window)) {
+      setNotice({ type: 'error', text: '이 브라우저는 데스크톱 알림을 지원하지 않습니다.' });
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    setNotice({
+      type: permission === 'granted' ? 'success' : 'error',
+      text: permission === 'granted' ? '일정 알림을 허용했습니다.' : '브라우저 사이트 설정에서 알림을 허용해 주세요.',
+    });
+  }
+
+  async function createGroupInvite() {
+    if (!selectedGroupId) return;
+    setBusy('invite');
+    try {
+      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/invites`, { method: 'POST' });
+      const url = new URL(window.location.pathname, window.location.origin);
+      url.searchParams.set('invite', result.token);
+      setInviteLink(url.toString());
+      setNotice({ type: 'success', text: `초대 링크를 만들었습니다. ${new Date(result.expiresAt).toLocaleString('ko-KR')}까지 사용할 수 있습니다.` });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function copyGroupInvite() {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setNotice({ type: 'success', text: '그룹 초대 링크를 복사했습니다.' });
+    } catch {
+      setNotice({ type: 'error', text: '링크 복사에 실패했습니다. 링크를 선택해 직접 복사해 주세요.' });
+    }
+  }
+
+  async function addCharacterToGroup(ocid) {
+    if (!selectedGroupId) return;
+    try {
+      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/characters`, {
+        method: 'POST',
+        body: JSON.stringify({ ocid }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+      setNotice({ type: 'success', text: '캐릭터를 그룹 로스터에 추가했습니다.' });
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function removeCharacterFromGroup(ocid) {
+    if (!selectedGroupId) return;
+    try {
+      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/characters`, {
+        method: 'DELETE',
+        body: JSON.stringify({ ocid }),
+      });
+      await loadGroupData(accessToken, selectedGroupId);
+    } catch (error) {
+      reportError(error);
+    }
   }
 
   async function signIn(silent = false) {
@@ -259,17 +522,36 @@ function App() {
         workerRequest(token, '/api/characters'),
       ]);
       const savedCharacters = characterResult.characters || [];
-      const savedGroups = groupResult.groups || [];
+      let savedGroups = groupResult.groups || [];
       const savedActiveCharacterIds = readActiveCharacterIds(profile.email, savedCharacters);
       setAccessToken(token);
-      setAccount({ email: profile.email, name: profile.name });
+      setAccount({ email: profile.email, name: profile.name, sub: profile.sub });
       setCharacters(savedCharacters);
       setActiveCharacterIds(savedActiveCharacterIds);
       setSelectedCharacterId(savedActiveCharacterIds[0] || '');
+      setScheduleNotificationPreferences(readScheduleNotificationPreferences(profile.email));
+      const inviteToken = new URLSearchParams(window.location.search).get('invite');
+      let inviteGroupId = '';
+      if (inviteToken) {
+        const joined = await workerRequest(token, '/api/group-invites/accept', {
+          method: 'POST',
+          body: JSON.stringify({ token: inviteToken }),
+        });
+        inviteGroupId = joined.groupId;
+        const refreshedGroups = await workerRequest(token, '/api/groups');
+        savedGroups = refreshedGroups.groups || [];
+        setGroups(savedGroups);
+        setNotice({ type: 'success', text: `${joined.groupName} 그룹에 참가했습니다.` });
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('invite');
+        window.history.replaceState({}, '', cleanUrl.toString());
+      }
       setGroups(savedGroups);
-      setSelectedGroupId(savedGroups[0]?.id || '');
-      await loadGroupData(token, savedGroups[0]?.id || '');
-      if (!silent) setNotice({ type: 'success', text: `${profile.email} 계정으로 연결했습니다.` });
+      const initialGroupId = inviteGroupId || savedGroups[0]?.id || '';
+      setSelectedGroupId(initialGroupId);
+      if (inviteGroupId) setView('group');
+      await loadGroupData(token, initialGroupId);
+      if (!silent && !inviteGroupId) setNotice({ type: 'success', text: `${profile.email} 계정으로 연결했습니다.` });
     } catch (error) {
       if (!silent) reportError(error);
     } finally {
@@ -394,6 +676,7 @@ function App() {
 
   async function selectGroup(groupId) {
     setSelectedGroupId(groupId);
+    setInviteLink('');
     setView('group');
     setShowGroupForm(false);
     setBusy('group-load');
@@ -543,55 +826,19 @@ function App() {
     });
   }
 
-  async function createBoss(event) {
-    event.preventDefault();
-    const bossId = newBossId.trim();
-    if (!/^[a-z]+_[a-zA-Z]+$/.test(bossId)) {
-      setNotice({ type: 'error', text: 'bossId 형식으로 입력해 주세요. 예: hard_kaling' });
-      return;
-    }
-    setBusy('boss');
-    try {
-      const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/bosses`, {
-        method: 'POST',
-        body: JSON.stringify({ bossId }),
-      });
-      if (result.added) setBossIds((previous) => [...new Set([...previous, bossId])]);
-      setNewBossId('');
-      setNotice({ type: 'success', text: `${bossId} 보스를 등록했습니다.` });
-    } catch (error) {
-      reportError(error);
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function addMember(event) {
-    event.preventDefault();
-    if (!memberEmail.trim() || !selectedGroupId) return;
-    setBusy('member');
-    try {
-      await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/members`, {
-        method: 'POST',
-        body: JSON.stringify({ email: memberEmail.trim() }),
-      });
-      setMemberEmail('');
-      setNotice({ type: 'success', text: `${memberEmail.trim()} 계정을 그룹에 추가했습니다.` });
-    } catch (error) {
-      reportError(error);
-    } finally {
-      setBusy('');
-    }
-  }
-
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
   const activeCharacters = characters.filter(({ ocid }) => activeCharacterIds.includes(ocid));
   const activeCharacterWorldGroups = groupCharactersByWorld(activeCharacters);
   const characterWorldGroups = groupCharactersByWorld(characters);
   const selectedCharacter = activeCharacters.find(({ ocid }) => ocid === selectedCharacterId);
-  const currentRows = multipliers
-    .slice()
-    .sort((first, second) => first.nickname.localeCompare(second.nickname) || first.bossId.localeCompare(second.bossId));
+  const groupedPartyRows = new Map();
+  for (const character of groupCharacters) {
+    for (const assignment of character.bosses || []) {
+      const participants = groupedPartyRows.get(assignment.bossId) || [];
+      participants.push(character);
+      groupedPartyRows.set(assignment.bossId, participants);
+    }
+  }
   const viewTitle = view === 'characters'
     ? '내 캐릭터'
     : view === 'settings'
@@ -643,7 +890,6 @@ function App() {
             title="그룹 만들기"
             onClick={() => {
               setSelectedGroupId('');
-              setBossIds([]);
               setMultipliers([]);
               setShowGroupForm(true);
               setView('group');
@@ -914,6 +1160,69 @@ function App() {
                       </div>
                     )}
                   </section>
+                  <section className="panel-section schedule-section my-schedule-section">
+                    <div className="section-heading">
+                      <div><p className="eyebrow">MY SCHEDULE</p><h2>내 캐릭터 미완료 일정</h2></div>
+                      <span className="updated-count">그룹과 무관한 내 일정</span>
+                    </div>
+                    {!activeCharacters.length ? (
+                      <div className="empty-state compact"><strong>실사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 일정 관리할 캐릭터를 선택하세요.</p></div>
+                    ) : (
+                      <div className="my-schedule-list">
+                        {activeCharacters.map((character) => {
+                          const scheduler = character.scheduler || {};
+                          const daily = (scheduler.daily_contents || []).filter((item) => isIncomplete(item));
+                          const weekly = (scheduler.weekly_contents || []).filter((item) => isIncomplete(item));
+                          const bosses = (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true));
+                          const categories = [
+                            { id: 'daily', icon: '◷', label: '일일', items: daily },
+                            { id: 'weekly', icon: '▦', label: '주간', items: weekly },
+                            { id: 'bosses', icon: '⚔', label: '보스', items: bosses },
+                          ];
+                          const incompleteCount = daily.length + weekly.length + bosses.length;
+                          const preferences = scheduleNotificationPreferences[character.ocid] || {};
+                          return (
+                            <article className="my-schedule-character" key={character.ocid}>
+                              <header className="my-schedule-character-heading">
+                                {character.image ? <img src={character.image} alt="" loading="lazy" /> : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
+                                <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'} · 미완료 {incompleteCount}</small></div>
+                                <span className={`schedule-total ${incompleteCount ? 'has-pending' : ''}`}>{scheduler.date || '기록 없음'}</span>
+                              </header>
+                              <div className="schedule-alert-options" aria-label={`${character.nickname} 알림 종류`}>
+                                {categories.map((category) => (
+                                  <label className="schedule-alert-option" key={category.id}>
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`${character.nickname} ${category.label} 일정 알림`}
+                                      checked={Boolean(preferences[category.id])}
+                                      onChange={(event) => updateScheduleNotificationPreference(character.ocid, category.id, event.target.checked)}
+                                    />
+                                    <span>{category.icon} {category.label} 알림</span>
+                                  </label>
+                                ))}
+                              </div>
+                              <div className="schedule-task-groups">
+                                {categories.map((category) => (
+                                  <section className="schedule-task-group" key={category.id} aria-label={`${character.nickname} ${category.label} 일정`}>
+                                    <h3><span aria-hidden="true">{category.icon}</span>{category.label}<span>{category.items.length}</span></h3>
+                                    <div className="schedule-tasks">
+                                      {category.items.length ? category.items.map((item, index) => (
+                                        <span className={`task-chip pending task-${category.id}`} key={`${item.content_name}-${item.difficulty || ''}-${index}`}>
+                                          <span className="task-chip-icon" aria-hidden="true">{category.icon}</span>
+                                          {item.content_name}{item.difficulty ? ` ${item.difficulty}` : ''}{category.id !== 'bosses' && item.max_count > 1 ? ` (${item.now_count || 0}/${item.max_count})` : ''}
+                                        </span>
+                                      )) : <span className="task-chip completed">완료</span>}
+                                    </div>
+                                  </section>
+                                ))}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="privacy-note">브라우저 알림은 이 앱이 열려 있을 때 갱신된 일정 기준으로 표시됩니다. 알림 종류는 캐릭터별로 저장됩니다.</p>
+                  </section>
                 </>
               )}
 
@@ -950,98 +1259,110 @@ function App() {
                     <>
                       <section className="party-header">
                         <div>
-                          <p className="eyebrow">PARTY BOSS STATUS</p>
+                          <p className="eyebrow">GROUP BOSS PARTIES</p>
                           <h2>{selectedGroup.name}</h2>
-                          <p>{selectedGroup.role === 'admin' ? '관리자' : '그룹 멤버'} · {multipliers.length}개 배율 기록</p>
+                          <p>{selectedGroup.role === 'admin' ? '관리자' : '그룹 멤버'} · 참가 캐릭터 {groupCharacters.length}명</p>
                         </div>
-                        <button className="outline-button" type="button" onClick={() => setView('bosses')}>그룹 관리</button>
+                        <button className="outline-button" type="button" onClick={() => setView('bosses')}>그룹 및 파티 관리</button>
                       </section>
 
                       <section className="panel-section">
                         <div className="section-heading">
-                          <div><p className="eyebrow">BOSS PARTY</p><h2>파티 보스 현황</h2></div>
-                          <span className="updated-count">{bossIds.length} BOSSES</span>
+                          <div><p className="eyebrow">ASSIGNED PARTIES</p><h2>보스별 참가 캐릭터</h2></div>
+                          <span className="updated-count">{groupedPartyRows.size} 파티</span>
                         </div>
-                        {currentRows.length ? (
-                          <div className="boss-grid">
-                            {currentRows.map((row) => {
-                              const icon = bossImages[`./bossImage/${row.bossId}.png`];
+                        {groupedPartyRows.size ? (
+                          <div className="group-party-grid">
+                            {[...groupedPartyRows.entries()].map(([bossId, participants]) => {
+                              const config = bossDetails(bossId);
+                              const icon = bossImages[`./bossImage/${bossId}.png`];
                               return (
-                                <article className="boss-item" key={`${row.nickname}:${row.bossId}`}>
-                                  {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder">◇</span>}
-                                  <span className="boss-owner">{row.nickname}</span>
-                                  <span className="boss-id">{row.bossId}</span>
-                                  <strong>{row.multiplier}%</strong>
-                                  <small>{row.updatedAt ? new Date(row.updatedAt).toLocaleString('ko-KR') : '기록 없음'}</small>
+                                <article className="group-party-item" key={bossId}>
+                                  <div className="group-party-heading">
+                                    {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder">◇</span>}
+                                    <div><p className="eyebrow">{config.difficultyLabel}</p><h3>{config.name}</h3></div>
+                                    <span className="party-size-count">{participants.length}/{config.recommendedPartySize}인</span>
+                                  </div>
+                                  <div className="group-party-members">
+                                    {participants.map((character) => (
+                                      <span className="group-party-member" key={`${character.ownerSub}:${character.ocid}`} title={character.ownerEmail}>
+                                        {character.image ? <img src={character.image} alt="" /> : <span>{character.nickname.slice(0, 1)}</span>}
+                                        {character.nickname}
+                                      </span>
+                                    ))}
+                                  </div>
                                 </article>
                               );
                             })}
                           </div>
                         ) : (
                           <div className="empty-state compact">
-                            <strong>저장된 파티 보스 배율이 없습니다</strong>
-                            <p>그룹 관리에서 보스를 등록한 뒤 캐릭터를 선택해 배율을 갱신하세요.</p>
+                            <strong>아직 편성된 보스 파티가 없습니다</strong>
+                            <p>그룹 및 파티 관리에서 캐릭터를 추가하고 추천 보스를 배정하세요.</p>
                           </div>
                         )}
                       </section>
-
-                      <section className="panel-section schedule-section">
+                      <section className="panel-section my-schedule-section">
                         <div className="section-heading">
-                          <div><p className="eyebrow">NEXON SCHEDULER</p><h2>내 캐릭터 미완료 일정</h2></div>
-                          {selectedCharacter && <span className="updated-count">선택 캐릭터: {selectedCharacter.nickname}</span>}
+                          <div><p className="eyebrow">MY SCHEDULE</p><h2>내 캐릭터 미완료 일정</h2></div>
+                          <button className="outline-button" type="button" onClick={requestScheduleNotificationPermission}>
+                            {'Notification' in window && Notification.permission === 'granted' ? '알림 허용됨' : '알림 허용'}
+                          </button>
                         </div>
                         {!activeCharacters.length ? (
-                          <div className="empty-state compact"><strong>사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 사용할 캐릭터를 선택하세요.</p></div>
+                          <div className="empty-state compact"><strong>실사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 일정 관리할 캐릭터를 선택하세요.</p></div>
                         ) : (
-                          <div className="schedule-character-list">
+                          <div className="my-schedule-list">
                             {activeCharacters.map((character) => {
                               const scheduler = character.scheduler || {};
-                              const daily = (scheduler.daily_contents || []).filter((item) => isIncomplete(item));
-                              const weekly = (scheduler.weekly_contents || []).filter((item) => isIncomplete(item));
-                              const bosses = (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true));
-                              const incompleteCount = daily.length + weekly.length + bosses.length;
+                              const categories = [
+                                { id: 'daily', icon: '◷', label: '일일', items: (scheduler.daily_contents || []).filter((item) => isIncomplete(item)) },
+                                { id: 'weekly', icon: '▦', label: '주간', items: (scheduler.weekly_contents || []).filter((item) => isIncomplete(item)) },
+                                { id: 'bosses', icon: '⚔', label: '보스', items: (scheduler.boss_contents || []).filter((item) => isIncomplete(item, true)) },
+                              ];
+                              const total = categories.reduce((sum, category) => sum + category.items.length, 0);
+                              const preferences = scheduleNotificationPreferences[character.ocid] || {};
                               return (
-                                <article className="schedule-character" key={character.ocid}>
-                                  <button
-                                    className="schedule-character-name"
-                                    type="button"
-                                    onClick={() => setSelectedCharacterId(character.ocid)}
-                                  >
-                                    {character.image
-                                      ? <img src={character.image} alt="" loading="lazy" />
-                                      : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
-                                    <span><strong>{character.nickname}</strong><small>Lv. {character.level || '-'}</small></span>
-                                  </button>
-                                  <div className="schedule-tasks">
-                                    {scheduler.date ? (
-                                      <>
-                                        {[...daily, ...weekly].map((item, index) => (
-                                          <span className="task-chip pending" key={`${item.content_name}-${index}`}>
-                                            {item.content_name} {item.max_count > 1 ? `(${item.now_count || 0}/${item.max_count})` : ''}
-                                          </span>
-                                        ))}
-                                        {bosses.map((item, index) => (
-                                          <span className="task-chip pending" key={`${item.content_name}-${item.difficulty}-${index}`}>
-                                            {item.content_name}{item.difficulty ? ` ${item.difficulty}` : ''}
-                                          </span>
-                                        ))}
-                                        {!incompleteCount && <span className="task-chip completed">미완료 일정 없음</span>}
-                                      </>
-                                    ) : (
-                                      <span className="task-chip unavailable">해당 날짜의 스케줄 기록이 없습니다</span>
-                                    )}
+                                <article className="my-schedule-character" key={character.ocid}>
+                                  <header className="my-schedule-character-heading">
+                                    {character.image ? <img src={character.image} alt="" loading="lazy" /> : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
+                                    <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'} · 미완료 {total}</small></div>
+                                    <span className={`schedule-total ${total ? 'has-pending' : ''}`}>{scheduler.date || '기록 없음'}</span>
+                                  </header>
+                                  <div className="schedule-alert-options">
+                                    {categories.map((category) => (
+                                      <label className="schedule-alert-option" key={category.id}>
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`${character.nickname} ${category.label} 일정 알림`}
+                                          checked={Boolean(preferences[category.id])}
+                                          onChange={(event) => updateScheduleNotificationPreference(character.ocid, category.id, event.target.checked)}
+                                        />
+                                        <span>{category.icon} {category.label} 알림</span>
+                                      </label>
+                                    ))}
                                   </div>
-                                  <span className={`schedule-total ${incompleteCount ? 'has-pending' : ''}`}>
-                                    {scheduler.date ? `미완료 ${incompleteCount}` : '기록 없음'}
-                                  </span>
+                                  <div className="schedule-task-groups">
+                                    {categories.map((category) => (
+                                      <section className="schedule-task-group" key={category.id} aria-label={`${character.nickname} ${category.label} 일정`}>
+                                        <h3><span aria-hidden="true">{category.icon}</span>{category.label}<span>{category.items.length}</span></h3>
+                                        <div className="schedule-tasks">
+                                          {category.items.length ? category.items.map((item, index) => (
+                                            <span className={`task-chip pending task-${category.id}`} key={`${item.content_name}-${item.difficulty || ''}-${index}`}>
+                                              <span className="task-chip-icon" aria-hidden="true">{category.icon}</span>
+                                              {item.content_name}{item.difficulty ? ` ${item.difficulty}` : ''}{category.id !== 'bosses' && item.max_count > 1 ? ` (${item.now_count || 0}/${item.max_count})` : ''}
+                                            </span>
+                                          )) : <span className="task-chip completed">완료</span>}
+                                        </div>
+                                      </section>
+                                    ))}
+                                  </div>
                                 </article>
                               );
                             })}
                           </div>
                         )}
-                        <p className="privacy-note">
-                          최근 동기화된 Nexon 스케줄러 기준입니다. 최신 현황을 불러오려면 계정 설정에서 API 키로 다시 동기화하세요.
-                        </p>
+                        <p className="privacy-note">선택한 알림은 브라우저에서 앱을 열었을 때 동기화된 미완료 일정 기준으로 표시됩니다.</p>
                       </section>
                     </>
                   )}
@@ -1049,44 +1370,112 @@ function App() {
               )}
 
               {view === 'bosses' && (
-                <section className="boss-config-section">
+                <section className="group-management-view">
                   {!selectedGroup ? (
                     <div className="empty-state">
                       <strong>관리할 그룹을 먼저 선택하세요</strong>
-                      <p>왼쪽 그룹 아이콘을 누르면 해당 그룹의 보스 설정을 볼 수 있습니다.</p>
+                      <p>왼쪽 그룹 아이콘에서 파티를 선택하세요.</p>
                     </div>
                   ) : (
                     <>
-                      <div className="section-heading">
-                        <div><p className="eyebrow">{selectedGroup.name}</p><h2>그룹 보스 및 멤버 설정</h2></div>
-                        <span className="updated-count">{bossIds.length} BOSSES</span>
-                      </div>
-                      {selectedGroup.role === 'admin' && (
-                        <>
-                          <form className="management-form" onSubmit={createBoss}>
-                            <label htmlFor="boss-id">bossId</label>
-                            <input id="boss-id" value={newBossId} onChange={(event) => setNewBossId(event.target.value)} placeholder="예: hard_kaling" required />
-                            <button className="outline-button" type="submit" disabled={busy === 'boss'}>보스 추가</button>
-                          </form>
-                          <form className="management-form" onSubmit={addMember}>
-                            <label htmlFor="member-email">Google 이메일로 멤버 초대</label>
-                            <input id="member-email" type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} placeholder="member@gmail.com" required />
-                            <button className="outline-button" type="submit" disabled={busy === 'member'}>{busy === 'member' ? '초대 중...' : '멤버 초대'}</button>
-                          </form>
-                        </>
-                      )}
-                      <div className="boss-list">
-                        {bossIds.map((bossId) => {
-                          const icon = bossImages[`./bossImage/${bossId}.png`];
-                          return (
-                            <div className="boss-list-row" key={bossId}>
-                              {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder small-placeholder">◇</span>}
-                              <span>{bossId}</span><span className="row-note">배율 조회 대상</span>
-                            </div>
-                          );
-                        })}
-                        {!bossIds.length && <div className="empty-state compact">이 그룹에 등록된 보스가 없습니다.</div>}
-                      </div>
+                      <section className="group-invite-section">
+                        <div>
+                          <p className="eyebrow">INVITE MEMBERS</p>
+                          <h2>{selectedGroup.name} 초대 링크</h2>
+                          <p>링크는 생성 시점부터 7일간 유효하며 로그인 후 그룹에 참여합니다.</p>
+                        </div>
+                        {selectedGroup.role === 'admin' ? (
+                          <button className="primary-button" type="button" onClick={createGroupInvite} disabled={busy === 'invite'}>
+                            {busy === 'invite' ? '링크 생성 중...' : '초대 링크 만들기'}
+                          </button>
+                        ) : <span className="updated-count">그룹 관리자만 초대 링크를 만들 수 있습니다</span>}
+                        {inviteLink && (
+                          <div className="invite-link-field">
+                            <input aria-label="그룹 초대 링크" readOnly value={inviteLink} onFocus={(event) => event.target.select()} />
+                            <button className="outline-button" type="button" onClick={copyGroupInvite}>링크 복사</button>
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="group-character-picker panel-section">
+                        <div className="section-heading">
+                          <div><p className="eyebrow">ADD YOUR CHARACTERS</p><h2>그룹에 참여시킬 캐릭터</h2></div>
+                          <span className="updated-count">실사용 캐릭터 {activeCharacters.length}명</span>
+                        </div>
+                        {activeCharacters.length ? (
+                          <div className="group-add-character-grid">
+                            {activeCharacters.map((character) => {
+                              const alreadyAdded = groupCharacters.some((entry) => entry.ocid === character.ocid);
+                              return (
+                                <article className="group-add-character" key={character.ocid}>
+                                  {character.image ? <img src={character.image} alt="" /> : <span className="boss-placeholder">◇</span>}
+                                  <span><strong>{character.nickname}</strong><small>Lv. {character.level}</small></span>
+                                  <button className="outline-button" type="button" disabled={alreadyAdded} onClick={() => addCharacterToGroup(character.ocid)}>
+                                    {alreadyAdded ? '참여 중' : '그룹에 추가'}
+                                  </button>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : <div className="empty-state compact"><strong>실사용 캐릭터가 없습니다</strong><p>계정 설정에서 먼저 사용할 캐릭터를 선택하세요.</p></div>}
+                      </section>
+
+                      <section className="group-roster-section panel-section">
+                        <div className="section-heading">
+                          <div><p className="eyebrow">GROUP ROSTER</p><h2>캐릭터별 보스 파티 편성</h2></div>
+                          <span className="updated-count">캐릭터당 최대 {bossRecommendationSettings.maxBossesPerCharacter}개 보스 · 난이도 가족별 1개</span>
+                        </div>
+                        {groupCharacters.length ? (
+                          <div className="group-roster-list">
+                            {groupCharacters.map((character) => {
+                              const recommendations = recommendationsForCharacter(character, multipliers);
+                              const assignedBosses = character.bosses || [];
+                              return (
+                                <article className="group-roster-character" key={`${character.ownerSub}:${character.ocid}`}>
+                                  <header className="group-roster-character-heading">
+                                    {character.image ? <img src={character.image} alt="" /> : <span className="boss-placeholder">◇</span>}
+                                    <div><h3>{character.nickname}</h3><p>{character.ownerEmail} · Lv. {character.level} · {assignedBosses.length}/{bossRecommendationSettings.maxBossesPerCharacter} 보스</p></div>
+                                    {(character.ownerSub === account?.sub || selectedGroup.role === 'admin') && (
+                                      <button className="quiet-button remove-roster-character" type="button" onClick={() => removeCharacterFromGroup(character)} aria-label={`${character.nickname} 그룹에서 제거`}>그룹에서 제거</button>
+                                    )}
+                                  </header>
+                                  <div className="assigned-boss-list">
+                                    {assignedBosses.length ? assignedBosses.map((assignment) => {
+                                      const config = bossDetails(assignment.bossId);
+                                      return (
+                                        <button className="assigned-boss-chip" type="button" key={assignment.bossId} onClick={() => unassignBossFromCharacter(character, assignment.bossId)} title="파티에서 제외">
+                                          <span>{config.difficultyLabel} {config.name}</span><span aria-hidden="true">×</span>
+                                        </button>
+                                      );
+                                    }) : <span className="updated-count">아직 참가 중인 보스가 없습니다</span>}
+                                  </div>
+                                  <div className="recommendation-list">
+                                    <div className="recommendation-heading"><strong>추천 보스</strong><span>배율 임계치 · 보상 순위 기준</span></div>
+                                    {recommendations.length ? recommendations.map((boss) => {
+                                      const existing = assignedBosses.find((assignment) => assignment.familyId === boss.familyId);
+                                      const existingBoss = existing ? bossDetails(existing.bossId) : null;
+                                      const lowerReward = existingBoss && boss.rewardTier < existingBoss.rewardTier;
+                                      const full = assignedBosses.length >= bossRecommendationSettings.maxBossesPerCharacter && !existing;
+                                      const alreadyAssigned = existing?.bossId === boss.bossId;
+                                      const busyKey = `party:${character.ocid}:${boss.bossId}`;
+                                      const icon = bossImages[`./bossImage/${boss.bossId}.png`];
+                                      return (
+                                        <article className="recommendation-row" key={boss.bossId}>
+                                          {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder small-placeholder">◇</span>}
+                                          <div className="recommendation-boss-title"><strong>{boss.difficultyLabel} {boss.name}</strong><small>배율 {boss.multiplier}% · 추천 {boss.recommendedPartySize}인 · 보상 티어 {boss.rewardTier}</small></div>
+                                          <button className="outline-button" type="button" disabled={alreadyAssigned || lowerReward || full || busy === busyKey} onClick={() => assignBossToCharacter(character, boss)}>
+                                            {busy === busyKey ? '저장 중...' : alreadyAssigned ? '참가 중' : full ? '12개 한도' : lowerReward ? '상위 난이도 참가 중' : existing ? '난이도 변경' : '파티 배정'}
+                                          </button>
+                                        </article>
+                                      );
+                                    }) : <p className="recommendation-empty">조건을 만족하는 추천이 없습니다. 캐릭터 배율을 갱신하거나 <code>src/boss-recommendations.json</code>의 임계치를 조정하세요.</p>}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : <div className="empty-state compact"><strong>그룹에 등록된 캐릭터가 없습니다</strong><p>위에서 실사용 캐릭터를 추가하세요.</p></div>}
+                      </section>
                     </>
                   )}
                 </section>

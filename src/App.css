@@ -145,6 +145,26 @@ button:disabled { cursor: wait; opacity: .65; }
 .boss-placeholder { display: grid; width: 50px; height: 50px; place-items: center; color: #9ba4c6; font-size: 28px; }
 
 .schedule-section { padding-top: 25px; border-top: 1px solid #e2e4eb; }
+.my-schedule-section { padding-top: 25px; border-top: 1px solid #e2e4eb; }
+.my-schedule-list { display: grid; gap: 12px; }
+.my-schedule-character { padding: 16px; border: 1px solid #e1e4eb; border-radius: 8px; background: #fff; }
+.my-schedule-character-heading { display: flex; align-items: center; gap: 11px; }
+.my-schedule-character-heading > img, .my-schedule-character-heading > .character-fallback { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 10px; background: #f0f2ff; object-fit: contain; }
+.my-schedule-character-heading > div { display: grid; min-width: 0; flex: 1; gap: 4px; }
+.my-schedule-character-heading strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.my-schedule-character-heading small { color: #858b98; font-size: 10px; }
+.schedule-alert-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 13px 0; }
+.schedule-alert-option { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #e1e4eb; border-radius: 5px; color: #596071; font-size: 10px; cursor: pointer; }
+.schedule-alert-option input { width: 14px; height: 14px; margin: 0; accent-color: #596fd1; }
+.schedule-task-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.schedule-task-group { min-width: 0; padding: 10px; border-radius: 6px; background: #f6f7fa; }
+.schedule-task-group h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: #535969; font-size: 11px; }
+.schedule-task-group h3 > span:first-child { color: #6377d3; font-size: 14px; }
+.schedule-task-group h3 > span:last-child { margin-left: auto; color: #9297a3; font-size: 10px; }
+.task-chip-icon { margin-right: 4px; font-size: 12px; }
+.task-chip.task-daily { background: #fff2e7; color: #9c592c; }
+.task-chip.task-weekly { background: #eaf0ff; color: #4c64bd; }
+.task-chip.task-bosses { background: #fce9ec; color: #a34451; }
 .schedule-character-list { display: grid; gap: 9px; }
 .schedule-character { display: grid; grid-template-columns: 155px minmax(0, 1fr) 92px; align-items: center; gap: 13px; padding: 12px 13px; border: 1px solid #e4e6ed; border-radius: 8px; background: #fff; }
 .schedule-character-name { display: flex; min-width: 0; align-items: center; gap: 9px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
@@ -175,11 +195,59 @@ button:disabled { cursor: wait; opacity: .65; }
 .page-footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 44px; padding: 13px 0 3px; border-top: 1px solid #e0e3ea; color: #989daa; font-size: 10px; }
 .page-footer span:first-child { font-weight: 750; }
 
+.group-invite-section { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 18px; margin-bottom: 22px; padding: 19px 21px; border: 1px solid #e1e4eb; border-radius: 8px; background: #fff; }
+.group-invite-section h2 { margin: 4px 0; font-size: 17px; }
+.group-invite-section p:last-child { margin: 0; color: #858b98; font-size: 11px; }
+.invite-link-field { display: flex; grid-column: 1 / -1; gap: 9px; }
+.invite-link-field input { min-width: 0; flex: 1; height: 38px; padding: 0 10px; border: 1px solid #dfe2e9; border-radius: 5px; background: #fbfcfe; color: #4d5362; font-size: 11px; }
+.group-add-character-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 9px; }
+.group-add-character { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e2e5ec; border-radius: 7px; background: #fff; }
+.group-add-character > img { width: 44px; height: 44px; border-radius: 8px; background: #f0f2ff; object-fit: contain; }
+.group-add-character > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.group-add-character strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.group-add-character small { color: #858b98; font-size: 9px; }
+.group-add-character .outline-button { min-height: 31px; padding: 0 8px; font-size: 10px; }
+.group-roster-list { display: grid; gap: 13px; }
+.group-roster-character { min-width: 0; padding: 16px; border: 1px solid #e1e4eb; border-radius: 8px; background: #fff; }
+.group-roster-character-heading { display: flex; align-items: center; gap: 11px; }
+.group-roster-character-heading > img, .group-roster-character-heading > .boss-placeholder { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 9px; background: #f0f2ff; object-fit: contain; }
+.group-roster-character-heading > div { min-width: 0; flex: 1; }
+.group-roster-character-heading h3 { margin: 0 0 4px; font-size: 13px; }
+.group-roster-character-heading p { margin: 0; color: #858b98; font-size: 10px; }
+.remove-roster-character { flex: 0 0 auto; color: #a34b52; font-size: 10px; }
+.assigned-boss-list { display: flex; flex-wrap: wrap; gap: 7px; margin: 13px 0; }
+.assigned-boss-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 29px; padding: 0 9px; border: 1px solid #cad2f1; border-radius: 5px; background: #f2f4ff; color: #4a5da9; font-size: 10px; cursor: pointer; }
+.assigned-boss-chip span:last-child { font-size: 15px; }
+.recommendation-list { border-top: 1px solid #e7e9ef; padding-top: 12px; }
+.recommendation-heading { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.recommendation-heading strong { font-size: 11px; }
+.recommendation-heading span { color: #9297a3; font-size: 9px; }
+.recommendation-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 53px; border-top: 1px solid #f0f1f4; }
+.recommendation-row > img, .recommendation-row > .boss-placeholder { width: 32px; height: 32px; object-fit: contain; }
+.recommendation-boss-title { display: grid; min-width: 0; gap: 3px; }
+.recommendation-boss-title strong { overflow: hidden; color: #343948; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.recommendation-boss-title small { color: #858b98; font-size: 9px; }
+.recommendation-row .outline-button { min-height: 29px; padding: 0 8px; font-size: 9px; }
+.recommendation-empty { color: #858b98; font-size: 10px; }
+.group-party-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.group-party-item { min-width: 0; padding: 14px; border: 1px solid #e1e4eb; border-radius: 7px; background: #fff; }
+.group-party-heading { display: flex; align-items: center; gap: 9px; }
+.group-party-heading > img, .group-party-heading > .boss-placeholder { width: 42px; height: 42px; flex: 0 0 42px; object-fit: contain; }
+.group-party-heading > div { min-width: 0; flex: 1; }
+.group-party-heading h3 { margin: 2px 0 0; font-size: 13px; }
+.party-size-count { color: #6375c5; font-size: 10px; font-weight: 700; }
+.group-party-members { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.group-party-member { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px 4px 4px; border-radius: 14px; background: #f1f2f6; color: #505667; font-size: 9px; }
+.group-party-member img, .group-party-member > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: #e5e9fb; object-fit: contain; }
+
 @media (max-width: 760px) {
   .content { padding: 28px 22px 20px; }
   .character-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   .character-tools { flex-wrap: wrap; justify-content: flex-end; }
   .schedule-character { grid-template-columns: 130px minmax(0, 1fr); }
+  .schedule-task-groups { grid-template-columns: 1fr; }
+  .group-invite-section { grid-template-columns: 1fr; }
+  .group-invite-section > .primary-button { justify-self: start; }
   .schedule-total { grid-column: 2; text-align: left; }
   .create-group-card { grid-template-columns: 1fr auto; }
   .create-group-card > div { grid-column: 1 / -1; }
@@ -205,6 +273,16 @@ button:disabled { cursor: wait; opacity: .65; }
   .page-heading .primary-button { max-width: 155px; padding: 0 9px; font-size: 10px; }
   .character-settings-section .section-heading { align-items: flex-start; flex-direction: column; }
   .character-settings-section .character-tools { width: 100%; justify-content: flex-start; }
+  .group-add-character-grid, .group-party-grid { grid-template-columns: 1fr; }
+  .group-roster-character { padding: 12px 9px; }
+  .group-roster-character-heading { flex-wrap: wrap; }
+  .remove-roster-character { margin-left: auto; }
+  .recommendation-row { grid-template-columns: 30px minmax(0, 1fr) auto; gap: 6px; }
+  .recommendation-row .outline-button { max-width: 82px; padding: 0 5px; }
+  .invite-link-field { flex-direction: column; }
+  .my-schedule-character { padding: 12px 9px; }
+  .schedule-alert-options { gap: 5px; }
+  .schedule-alert-option { padding: 5px 6px; font-size: 9px; }
   .active-character-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
   .active-character-option { grid-template-rows: 68px auto auto; gap: 6px; min-height: 135px; padding: 15px 5px 9px; }
   .active-character-option > input { top: 7px; left: 7px; width: 15px; height: 15px; }
@@ -321,6 +399,22 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .active-character-option { border-color: #343847; background: #20232e; }
 .app-shell[data-theme='dark'] .account-danger-zone { border-color: #343847; }
 .app-shell[data-theme='dark'] .account-danger-zone h2 { color: #e6e8ef; }
+.app-shell[data-theme='dark'] .my-schedule-character,
+.app-shell[data-theme='dark'] .group-invite-section,
+.app-shell[data-theme='dark'] .group-add-character,
+.app-shell[data-theme='dark'] .group-roster-character,
+.app-shell[data-theme='dark'] .group-party-item { border-color: #343847; background: #20232e; }
+.app-shell[data-theme='dark'] .group-roster-character-heading h3,
+.app-shell[data-theme='dark'] .recommendation-boss-title strong { color: #e4e6ef; }
+.app-shell[data-theme='dark'] .group-add-character strong { color: #e4e6ef; }
+.app-shell[data-theme='dark'] .schedule-task-group { background: #191c25; }
+.app-shell[data-theme='dark'] .schedule-task-group h3 { color: #d1d4df; }
+.app-shell[data-theme='dark'] .schedule-alert-option { border-color: #414657; color: #c3c7d2; }
+.app-shell[data-theme='dark'] .invite-link-field input { border-color: #414657; background: #191c25; color: #e2e4eb; }
+.app-shell[data-theme='dark'] .assigned-boss-chip { border-color: #414b78; background: #292e45; color: #c2cbff; }
+.app-shell[data-theme='dark'] .group-party-member { background: #2b2e3a; color: #d3d6df; }
+.app-shell[data-theme='dark'] .recommendation-list,
+.app-shell[data-theme='dark'] .recommendation-row { border-color: #343847; }
 .app-shell[data-theme='dark'] .extension-install-help { border-color: #69464a; background: #302428; color: #f0dfe1; }
 .app-shell[data-theme='dark'] .extension-install-help code { background: rgba(255, 255, 255, .08); }
 

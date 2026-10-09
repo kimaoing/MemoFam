@@ -1,0 +1,33 @@
+{
+  "maxBossesPerCharacter": 12,
+  "recommendationLimit": 12,
+  "defaultMinimumMultiplier": 50,
+  "inviteTtlDays": 7,
+  "bosses": [
+    { "bossId": "easy_bellona", "familyId": "bellona", "name": "벨로나", "difficulty": "easy", "difficultyLabel": "이지", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_bellona", "familyId": "bellona", "name": "벨로나", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_bellona", "familyId": "bellona", "name": "벨로나", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 3, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_kaling", "familyId": "kaling", "name": "카링", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "easy_kaling", "familyId": "kaling", "name": "카링", "difficulty": "easy", "difficultyLabel": "이지", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_kaling", "familyId": "kaling", "name": "카링", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 3, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "extreme_kaling", "familyId": "kaling", "name": "카링", "difficulty": "extreme", "difficultyLabel": "익스트림", "rewardTier": 4, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_kalos", "familyId": "kalos", "name": "칼로스", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 1, "minimumMultiplier": 100, "recommendedPartySize": 6 },
+    { "bossId": "chaos_kalos", "familyId": "kalos", "name": "칼로스", "difficulty": "chaos", "difficultyLabel": "카오스", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 2 },
+    { "bossId": "extreme_kalos", "familyId": "kalos", "name": "칼로스", "difficulty": "extreme", "difficultyLabel": "익스트림", "rewardTier": 3, "minimumMultiplier": 50, "recommendedPartySize": 2 },
+    { "bossId": "normal_limbo", "familyId": "limbo", "name": "림보", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_limbo", "familyId": "limbo", "name": "림보", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_seren", "familyId": "seren", "name": "세렌", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "extreme_seren", "familyId": "seren", "name": "세렌", "difficulty": "extreme", "difficultyLabel": "익스트림", "rewardTier": 3, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_jupiter", "familyId": "jupiter", "name": "유피테르", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_jupiter", "familyId": "jupiter", "name": "유피테르", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_adversary", "familyId": "adversary", "name": "대적자", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_adversary", "familyId": "adversary", "name": "대적자", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "extreme_adversary", "familyId": "adversary", "name": "대적자", "difficulty": "extreme", "difficultyLabel": "익스트림", "rewardTier": 3, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_bardrix", "familyId": "bardrix", "name": "발드릭스", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_bardrix", "familyId": "bardrix", "name": "발드릭스", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "extreme_blackMage", "familyId": "blackmage", "name": "검은 마법사", "difficulty": "extreme", "difficultyLabel": "익스트림", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "extreme_lotus", "familyId": "lotus", "name": "스우", "difficulty": "extreme", "difficultyLabel": "익스트림", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "normal_maleficStar", "familyId": "maleficstar", "name": "흉성", "difficulty": "normal", "difficultyLabel": "노말", "rewardTier": 1, "minimumMultiplier": 50, "recommendedPartySize": 6 },
+    { "bossId": "hard_maleficStar", "familyId": "maleficstar", "name": "흉성", "difficulty": "hard", "difficultyLabel": "하드", "rewardTier": 2, "minimumMultiplier": 50, "recommendedPartySize": 6 }
+  ]
+}

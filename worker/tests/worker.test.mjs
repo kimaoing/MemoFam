@@ -69,7 +69,7 @@ test('blocks an authenticated non-member from a group', async () => {
   }
 });
 
-test('imports browser-captured scores for an owned character and filters group bosses', async () => {
+test('imports browser-captured scores and every valid boss multiplier for a group member', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;
   const originalBatch = env.DB.batch;
@@ -125,16 +125,17 @@ test('imports browser-captured scores for an owned character and filters group b
     }, {
       nickname: '오잉느',
       boss380HexaScore: 67619,
-      updatedMultipliers: 1,
-      ignoredMultipliers: 1,
+      updatedMultipliers: 2,
+      ignoredMultipliers: 0,
     });
     assert.equal(typeof result.updatedAt, 'string');
     assert.equal(batches.length, 1);
-    assert.equal(batches[0].length, 2);
+    assert.equal(batches[0].length, 3);
     assert.equal(batches[0][0].query.includes('UPDATE characters'), true);
     assert.deepEqual(batches[0][0].values, [67619, 'google-subject', '오잉느']);
     assert.equal(batches[0][1].query.includes('INSERT INTO multipliers'), true);
     assert.deepEqual(batches[0][1].values.slice(0, 4), ['group-1', '오잉느', 'hard_kaling', 25.5]);
+    assert.deepEqual(batches[0][2].values.slice(0, 4), ['group-1', '오잉느', 'normal_kaling', 40]);
 
     characterRow = null;
     const unownedResponse = await importRequest({ nickname: '타인캐릭터', boss380HexaScore: 67619 });
@@ -215,6 +216,148 @@ test('adds a group boss to D1', async () => {
   } finally {
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;
+  }
+});
+
+test('creates hashed seven-day group invites and accepts them for authenticated users', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  let insertedInvite;
+  let insertedMember;
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject',
+    email: 'member@example.test',
+    email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      query,
+      values,
+      first: async () => {
+        if (query.includes('FROM groups g JOIN group_members')) {
+          return {
+            id: 'group-1', name: 'Test group', created_by_sub: 'google-subject',
+            created_by_email: 'member@example.test', role: 'admin',
+          };
+        }
+        if (query.includes('FROM group_invites')) {
+          return { groupId: 'group-1', name: 'Test group', expiresAt: insertedInvite[4] };
+        }
+        return null;
+      },
+      run: async () => {
+        if (query.includes('INSERT INTO group_invites')) insertedInvite = values;
+        if (query.includes('INSERT INTO group_members')) insertedMember = values;
+        return { success: true };
+      },
+    }),
+  });
+  try {
+    const createResponse = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1/invites', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer valid-token' },
+    }), env);
+    assert.equal(createResponse.status, 201);
+    const invite = await createResponse.json();
+    assert.match(invite.token, /^[a-f0-9]{64}$/);
+    assert.notEqual(insertedInvite[0], invite.token);
+    assert.equal(new Date(invite.expiresAt).getTime() - new Date(insertedInvite[3]).getTime(), 7 * 24 * 60 * 60 * 1000);
+
+    const acceptResponse = await worker.fetch(new Request('https://worker.example.test/api/group-invites/accept', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: invite.token }),
+    }), env);
+    assert.equal(acceptResponse.status, 200);
+    assert.deepEqual(await acceptResponse.json(), { groupId: 'group-1', groupName: 'Test group', joined: true });
+    assert.deepEqual(insertedMember.slice(0, 2), ['group-1', 'member@example.test']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+  }
+});
+
+test('adds only owned level-260-or-higher characters to a group roster', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const statements = [];
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: 'member@example.test', email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM groups g JOIN group_members')
+        ? { id: 'group-1', name: 'Test group', created_by_sub: 'google-subject', created_by_email: 'member@example.test', role: 'admin' }
+        : query.includes('FROM characters') ? { nickname: '오잉느', level: 280 } : null,
+      run: async () => { statements.push({ query, values }); return { success: true }; },
+    }),
+  });
+  try {
+    const response = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1/characters', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ocid: 'ocid-1' }),
+    }), env);
+    assert.equal(response.status, 201);
+    assert.deepEqual(await response.json(), { nickname: '오잉느', ocid: 'ocid-1', added: true });
+    assert.equal(statements[0].query.includes('INSERT INTO group_characters'), true);
+    assert.deepEqual(statements[0].values.slice(0, 4), ['group-1', 'google-subject', 'member@example.test', '오잉느']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+  }
+});
+
+test('caps characters at twelve bosses and replaces only with equal or higher difficulty', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const originalBatch = env.DB.batch;
+  const assignments = [];
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: 'member@example.test', email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      query,
+      values,
+      first: async () => {
+        if (query.includes('FROM groups g JOIN group_members')) {
+          return { id: 'group-1', name: 'Test group', created_by_sub: 'google-subject', created_by_email: 'member@example.test', role: 'admin' };
+        }
+        if (query.includes('FROM group_characters gc JOIN characters')) return { ownerSub: 'google-subject', nickname: '오잉느' };
+        if (query.includes('SELECT boss_id AS bossId')) return assignments.find((assignment) => assignment.familyId === values[3]) || null;
+        if (query.includes('COUNT(*)')) return { count: assignments.length };
+        return null;
+      },
+    }),
+  });
+  env.DB.batch = async (statements) => {
+    const [remove, add] = statements;
+    const familyId = remove.values[3];
+    const current = assignments.findIndex((assignment) => assignment.familyId === familyId);
+    if (current >= 0) assignments.splice(current, 1);
+    assignments.push({ bossId: add.values[3], familyId: add.values[4] });
+  };
+  const assign = (bossId) => worker.fetch(new Request('https://worker.example.test/api/groups/group-1/party-characters/ocid-1', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bossId }),
+  }), env);
+  try {
+    assert.equal((await assign('normal_kalos')).status, 201);
+    const replace = await assign('chaos_kalos');
+    assert.equal(replace.status, 200);
+    assert.equal((await replace.json()).replacedBossId, 'normal_kalos');
+    assert.equal((await assign('normal_kalos')).status, 400);
+    for (const family of 'abcdefghijk') assert.equal((await assign(`normal_boss${family}`)).status, 201);
+    assert.equal(assignments.length, 12);
+    const overLimit = await assign('normal_bossm');
+    assert.equal(overLimit.status, 400);
+    assert.match((await overLimit.json()).error, /최대 12개/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+    env.DB.batch = originalBatch;
   }
 });
 

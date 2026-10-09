@@ -17,7 +17,8 @@
     "maleficstar": 3,
     "kaling": 6,
     "adversary": 3,
-    "kalos": 6
+    "kalos": 6,
+    "lotus" : 3
   },
   "maxPartySizeByBoss": { "chaos_kalos": 2 },
   "unrecordedSoloBossIds": [
@@ -31,7 +32,6 @@
     "normal_cygnus",
     "normal_lotus",
     "hard_lotus",
-    "extreme_lotus",
     "normal_damien",
     "hard_damien",
     "normal_slime",
@@ -48,6 +48,30 @@
     "hard_darknell",
     "normal_verushilla",
     "hard_verushilla"
+  ],
+  "unrecordedSoloFamilies": [
+    "lotus",
+    "verushilla",
+    "darknell",
+    "will",
+    "slime",
+    "gloom",
+    "lucid",
+    "damien",
+    "papulatus",
+    "cygnus",
+    "pinkbean",
+    "hilla",
+    "magnus",
+    "arkarium",
+    "vonleon",
+    "banban",
+    "vellum",
+    "bloodyqueen",
+    "zakum",
+    "kawoong",
+    "pierre",
+    "horntail"
   ],
   "difficultyRanks": { "easy": 1, "normal": 2, "hard": 3, "chaos": 4, "extreme": 5 },
   "highDifficultyOverrides": ["blackmage", "jupiter", "bardrix", "kaling", "limbo", "maleficstar","bellona", "adversary", "kalos", "seren" ],

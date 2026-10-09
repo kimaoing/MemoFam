@@ -47,9 +47,41 @@ function bossFamilyOrder(familyId) {
   const index = bossRecommendationSettings.highDifficultyOverrides.indexOf(familyId);
   return index === -1 ? bossRecommendationSettings.highDifficultyOverrides.length : index;
 }
-
 function recommendationPartyLabel(size) {
-  return Number(size) === 1 ? '솔플' : `${size}인`;
+  return Number(size) === 1 ? '솔플 가능' : `${size}인격 가능`;
+}
+
+const nonWeeklyBossFamilies = new Set(['cygnus', 'hilla', 'arkarium', 'vonleon', 'kawoong', 'horntail']);
+const nonWeeklyBossDifficulties = new Set([
+  'papulatus::normal',
+  'magnus::easy',
+  'magnus::normal',
+  'banban::normal',
+  'vellum::normal',
+  'bloodyqueen::normal',
+  'pierre::normal',
+]);
+const scheduleBossFamilyAliases = {
+  '시그너스': 'cygnus',
+  '힐라': 'hilla',
+  '아카이럼': 'arkarium',
+  '반레온': 'vonleon',
+  '카웅': 'kawoong',
+  '혼테일': 'horntail',
+  '파풀라투스': 'papulatus',
+  '매그너스': 'magnus',
+  '반반': 'banban',
+  '벨룸': 'vellum',
+  '블러디퀸': 'bloodyqueen',
+  '피에르': 'pierre',
+};
+
+function isDisplayedBossScheduleOption(option) {
+  const familyKey = option.familyKey.replace(/\s+/g, '').toLocaleLowerCase('ko');
+  const nameKey = option.name.replace(/\s+/g, '').toLocaleLowerCase('ko');
+  const familyId = scheduleBossFamilyAliases[nameKey] || scheduleBossFamilyAliases[familyKey] || familyKey;
+  return !nonWeeklyBossFamilies.has(familyId)
+    && !nonWeeklyBossDifficulties.has(`${familyId}::${option.difficulty}`);
 }
 
 function bossImageFor(bossId) {
@@ -212,13 +244,21 @@ const scheduleDifficultyLabels = {
   extreme: '익스트림',
   chaos: '카오스',
 };
+const difficultyOrder = ['extreme', 'hard', 'chaos', 'normal', 'easy'];
 const difficultyMarks = {
   easy: 'E',
   normal: 'N',
   hard: 'H',
-  extreme: 'X',
+  extreme: 'E',
   chaos: 'C',
 };
+
+function compareBossDifficulty(left, right) {
+  const leftRank = difficultyOrder.indexOf(left.option?.difficulty || left.difficulty);
+  const rightRank = difficultyOrder.indexOf(right.option?.difficulty || right.difficulty);
+  return (leftRank === -1 ? difficultyOrder.length : leftRank)
+    - (rightRank === -1 ? difficultyOrder.length : rightRank);
+}
 
 function scheduleBossOption(item) {
   const rawName = String(item.content_name || '').trim();
@@ -237,6 +277,7 @@ function scheduleBossOption(item) {
   return {
     name,
     bossId: config?.bossId || '',
+    familyId: familyKey,
     familyKey,
     difficulty,
     difficultyLabel: scheduleDifficultyLabels[difficulty] || difficulty,
@@ -588,6 +629,18 @@ function App() {
       setNotice({ type: 'error', text: '본인 캐릭터 또는 그룹 관리자만 파티를 편성할 수 있습니다.' });
       return;
     }
+    const targetFamilyId = target.familyId || bossDetails(target.bossId).familyId;
+    const assignedInOtherGroup = allGroupParties.some((party) => (
+      party.groupId !== selectedGroupId
+      && (party.familyId || bossDetails(party.bossId).familyId) === targetFamilyId
+      && (party.members || []).some(({ ownerSub, ocid }) => (
+        ownerSub === character.ownerSub && ocid === character.ocid
+      ))
+    ));
+    if (assignedInOtherGroup) {
+      setNotice({ type: 'error', text: `${character.nickname}은(는) 다른 그룹에서 이미 같은 보스 파티에 편성되어 있습니다.` });
+      return;
+    }
     const targetMembers = target.members || [];
     if (targetMembers.some(({ ownerSub, ocid }) => (
       ownerSub === character.ownerSub && ocid !== character.ocid
@@ -660,30 +713,18 @@ function App() {
     setSelectedBossDifficultyId(boss.bossId);
     setFocusedPartyId(partyId);
     setActiveBuilderPartyId(partyId);
+    setQuickPartyBossId(boss.bossId);
     setNotice({ type: 'success', text: '빈 파티를 임시로 추가했습니다. 완료를 눌러 반영하세요.' });
   }
 
   function quickAssignCharacter(character) {
     if (!selectedGroupId || !selectedQuickPartyBoss) return;
-    const party = currentGroupParties.find(({ bossId, members = [] }) => (
-      bossId === selectedQuickPartyBoss.bossId
-        && members.length < selectedQuickPartyBoss.maxPartySize
-        && !members.some(({ ownerSub }) => ownerSub === character.ownerSub)
-    ));
-    if (party) {
-      stageCharacterOnParty(character, party.partyId);
+    const targetParty = currentGroupParties.find(({ partyId }) => partyId === focusedPartyId);
+    if (!targetParty || targetParty.bossId !== selectedQuickPartyBoss.bossId) {
+      setNotice({ type: 'error', text: '먼저 편성할 파티 카드를 선택하세요.' });
       return;
     }
-    const partyId = crypto.randomUUID();
-    const newParty = {
-      partyId,
-      bossId: selectedQuickPartyBoss.bossId,
-      familyId: selectedQuickPartyBoss.familyId,
-      members: [partyMemberFromCharacter(character, selectedQuickPartyBoss.bossId)],
-      createdAt: new Date().toISOString(),
-    };
-    updatePartyDraft((parties) => [...parties, newParty]);
-    setNotice({ type: 'success', text: '새 파티 편성을 임시 저장했습니다. 완료를 눌러 반영하세요.' });
+    stageCharacterOnParty(character, targetParty.partyId);
   }
 
   function assignBossToCharacter(character, boss, partyId = null) {
@@ -717,23 +758,22 @@ function App() {
     if (party) removePartyMemberDraft(character, party.partyId);
   }
 
-  async function savePartyDraft() {
-    if (!selectedGroupId || partyDraft?.groupId !== selectedGroupId || busy === 'party-save') return;
+  async function savePartyDraft(partiesToSave = partyDraft?.groupId === selectedGroupId ? partyDraft.parties : null) {
+    if (!selectedGroupId || !partiesToSave || busy === 'party-save') return;
     setBusy('party-save');
     try {
       await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/parties/commit`, {
         method: 'PUT',
         body: JSON.stringify({
-          parties: partyDraft.parties.map(({ partyId, bossId, members }) => ({
+          parties: partiesToSave.map(({ partyId, bossId, members }) => ({
             partyId,
             bossId,
             members: members.map(({ ocid }) => ({ ocid })),
           })),
         }),
       });
-      setGroupParties(partyDraft.parties);
+      setGroupParties(partiesToSave);
       setPartyDraft(null);
-      setQuickPartyBossId('');
       await loadGroupData(accessToken, selectedGroupId);
       await loadAllGroupPartyData(accessToken);
       setNotice({ type: 'success', text: '파티 편성 변경을 모두 저장했습니다.' });
@@ -821,8 +861,7 @@ function App() {
   }
 
   function updateScheduleBossSelection(ocid, boss, enabled, displayedKeys) {
-    const saved = schedulePreferences[ocid]?.bosses;
-    const selected = Array.isArray(saved) ? saved : displayedKeys;
+    const selected = displayedKeys;
     const familySelection = selected.find((key) => key.slice(0, key.lastIndexOf('::')) === boss.familyKey);
     if (enabled && boss.cycle === 'weekly' && !familySelection
       && weeklyBossSelectionCount(selected) >= bossRecommendationSettings.maxBossesPerCharacter) {
@@ -1333,27 +1372,40 @@ function App() {
     - Math.max(...left.bosses.map(({ changedPrice }) => changedPrice))
   ));
   const selectedBossFamily = groupBossFamilies.find(({ familyId }) => familyId === selectedBossFamilyId);
-  const selectedBossOptions = selectedBossFamily?.bosses || [];
+  const selectedBossOptions = selectedBossFamily?.bosses.slice().sort(compareBossDifficulty) || [];
   const quickPartyBosses = groupBossFamilies.flatMap(({ bosses }) => bosses);
   const selectedQuickPartyBoss = quickPartyBosses.find(({ bossId }) => bossId === quickPartyBossId);
-  const quickPartyAssignedCharacterIds = new Set(
-    selectedQuickPartyBoss
-      ? currentGroupParties
-        .filter(({ familyId, bossId }) => (
-          (familyId || bossDetails(bossId).familyId) === selectedQuickPartyBoss.familyId
-        ))
-        .flatMap(({ members = [] }) => members.map(({ ownerSub, ocid }) => `${ownerSub}:${ocid}`))
-      : [],
-  );
+  const focusedQuickParty = currentGroupParties.find(({ partyId }) => partyId === focusedPartyId);
+  const focusedQuickPartyNumber = focusedQuickParty
+    ? currentGroupParties.filter(({ bossId }) => bossId === focusedQuickParty.bossId)
+      .findIndex(({ partyId }) => partyId === focusedQuickParty.partyId) + 1
+    : null;
+  const partiesAcrossGroups = [
+    ...allGroupParties.filter(({ groupId }) => groupId !== selectedGroupId),
+    ...currentGroupParties.map((party) => ({
+      ...party,
+      groupId: selectedGroupId,
+      groupName: selectedGroup?.name,
+    })),
+  ];
   const quickPartyCandidates = groupCharacters
-    .filter((character) => !selectedQuickPartyBoss
-      || !quickPartyAssignedCharacterIds.has(`${character.ownerSub}:${character.ocid}`))
-    .map((character) => ({
-      ...character,
-      quickMultiplier: selectedQuickPartyBoss
-        ? getCharacterBossMultiplier(character, selectedQuickPartyBoss.bossId)
-        : 0,
-    }))
+    .map((character) => {
+      const assignedParty = selectedQuickPartyBoss
+        ? partiesAcrossGroups.find((party) => (
+          (party.familyId || bossDetails(party.bossId).familyId) === selectedQuickPartyBoss.familyId
+          && (party.members || []).some(({ ownerSub, ocid }) => (
+            ownerSub === character.ownerSub && ocid === character.ocid
+          ))
+        ))
+        : null;
+      return {
+        ...character,
+        quickMultiplier: selectedQuickPartyBoss
+          ? getCharacterBossMultiplier(character, selectedQuickPartyBoss.bossId)
+          : 0,
+        assignedParty,
+      };
+    })
     .sort((left, right) => (
       (selectedQuickPartyBoss ? right.quickMultiplier - left.quickMultiplier : 0)
       || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
@@ -1431,6 +1483,105 @@ function App() {
       ? `갱신 중 ${mapleScouterProgress?.current || 0}/${mapleScouterProgress?.total || activeCharacters.length} · ${mapleScouterProgress?.nickname || ''}`
       : `실사용 ${activeCharacters.length}명 전체 갱신`;
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
+  const groupBossQuickMenu = selectedGroup && (
+    <aside className="group-boss-quick-menu" aria-label="보스 빠른 편성">
+      <header>
+        <p className="eyebrow">PARTY QUICK MENU</p>
+        <h2>보스 빠른 편성</h2>
+        <p>난이도를 누르면 빈 파티가 추가됩니다.</p>
+      </header>
+      <div className="group-boss-family-list">
+        {groupBossFamilies.map((family) => {
+          const representative = family.bosses.at(-1);
+          const icon = bossImageFor(representative.bossId);
+          const familyParties = currentGroupParties.filter(({ familyId, bossId }) => (
+            (familyId || bossDetails(bossId).familyId) === family.familyId
+          ));
+          return (
+            <article className="group-boss-family-option" key={family.familyId}>
+              {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder">◇</span>}
+              <strong>{family.name}</strong>
+              <div className="group-boss-difficulty-buttons" aria-label={`${family.name} 난이도`}>
+                {family.bosses.slice().sort(compareBossDifficulty).map((boss) => {
+                  const partiesForBoss = familyParties.filter(({ bossId }) => bossId === boss.bossId);
+                  return (
+                    <button
+                      className={`group-boss-difficulty difficulty-${boss.difficulty} ${quickPartyBossId === boss.bossId ? 'selected' : ''}`}
+                      type="button"
+                      disabled={busy === 'party-save'}
+                      key={boss.bossId}
+                      aria-pressed={quickPartyBossId === boss.bossId}
+                      aria-label={`${boss.difficultyLabel} ${boss.name} 파티 편성${partiesForBoss.length ? `, 파티 ${partiesForBoss.length}개` : ''}`}
+                      title={`${boss.difficultyLabel} ${boss.name}${partiesForBoss.length ? ` · 파티 ${partiesForBoss.length}개` : ''}`}
+                      onClick={() => createEmptyBossParty(boss)}
+                    >
+                      {difficultyMarks[boss.difficulty] || boss.difficultyLabel.slice(0, 1)}
+                      {partiesForBoss.length > 0 && <small>{partiesForBoss.length}</small>}
+                    </button>
+                  );
+                })}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </aside>
+  );
+  const groupCharacterQuickMenu = selectedGroup && (
+    <aside className="group-character-quick-menu" aria-label="그룹 캐릭터 빠른 편성">
+      <header>
+        <p className="eyebrow">CHARACTER QUICK MENU</p>
+        <h2>{selectedQuickPartyBoss ? `${selectedQuickPartyBoss.name} 배율순` : '그룹 캐릭터'}</h2>
+        <p>{selectedQuickPartyBoss ? '캐릭터를 파티 카드로 드래그해 편성하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
+      </header>
+      <div className="group-character-quick-list">
+        {quickPartyCandidates.length ? quickPartyCandidates.map((character) => {
+          const canManage = character.ownerSub === account?.sub || selectedGroup.role === 'admin';
+          const isAssigned = Boolean(character.assignedParty);
+          const assignmentBoss = isAssigned ? bossDetails(character.assignedParty.bossId) : null;
+          return (
+            <article
+              className={`group-character-quick-card ${isAssigned ? 'already-assigned' : ''}`}
+              key={`${character.ownerSub}:${character.ocid}`}
+              draggable={canManage && !isAssigned}
+              onDragStart={(event) => startPartyMemberDrag(event, character)}
+              onDragEnd={finishPartyMemberDrag}
+            >
+              {character.image
+                ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
+                : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
+              <span className="group-character-quick-details">
+                <strong>{character.nickname}</strong>
+                <small>Lv. {character.level || '-'}</small>
+                {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}% 배율</b>}
+                {isAssigned && (
+                  <em>
+                    이미 편성 · {character.assignedParty.groupName || '다른 그룹'} · {assignmentBoss.difficultyLabel} {assignmentBoss.name}
+                  </em>
+                )}
+              </span>
+              {selectedQuickPartyBoss && canManage && !isAssigned && (
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={busy === 'party-save' || !focusedQuickParty}
+                  title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
+                  onClick={() => quickAssignCharacter(character)}
+                >
+                  파티에 추가
+                </button>
+              )}
+            </article>
+          );
+        }) : (
+          <div className="empty-state compact">
+            <strong>{groupCharacters.length ? '표시할 캐릭터가 없습니다' : '그룹에 참여된 캐릭터가 없습니다'}</strong>
+            <p>{selectedQuickPartyBoss ? '이 보스에 편성할 수 있는 캐릭터가 없습니다.' : '그룹에 참여된 캐릭터가 여기에 표시됩니다.'}</p>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
 
   return (
     <div className="app-shell" data-theme={theme}>
@@ -1498,6 +1649,8 @@ function App() {
           <span className="rail-brand" aria-label="Maple Scout">M</span>
         )}
       </aside>
+
+      {view === 'group' && selectedGroup && groupBossQuickMenu}
 
       <div className="app-main">
         <header className="topbar">
@@ -1850,7 +2003,8 @@ function App() {
                             .map((item) => {
                               const option = scheduleBossOption(item);
                               return [option.key, { item, option }];
-                            })).values()];
+                            })).values()]
+                            .filter(({ option }) => isDisplayedBossScheduleOption(option));
                           const selectedBossKeys = Array.isArray(preferences.bosses)
                             ? limitBossKeysToWeeklyCap(preferences.bosses.filter((key) => availableBosses.some(({ option }) => option.key === key)))
                             : [];
@@ -1876,10 +2030,7 @@ function App() {
                           scheduleBossGroups.sort((left, right) => bossFamilyOrder(left.familyKey) - bossFamilyOrder(right.familyKey)
                             || (bossFamilyTopPrice[right.familyKey] || 0) - (bossFamilyTopPrice[left.familyKey] || 0)
                             || left.name.localeCompare(right.name, 'ko'));
-                          for (const family of scheduleBossGroups) {
-                            family.options.sort((left, right) => (bossRecommendationSettings.difficultyRanks[right.option.difficulty] || 0)
-                              - (bossRecommendationSettings.difficultyRanks[left.option.difficulty] || 0));
-                          }
+                          for (const family of scheduleBossGroups) family.options.sort(compareBossDifficulty);
                           return (
                             <article className="my-schedule-character" key={character.ocid}>
                               <header className="my-schedule-character-heading">
@@ -1914,7 +2065,7 @@ function App() {
                                                   easy: 'E',
                                                   normal: 'N',
                                                   hard: 'H',
-                                                  extreme: 'X',
+                                                  extreme: 'E',
                                                   chaos: 'C',
                                                 }[option.difficulty] || option.difficultyLabel.slice(0, 1);
                                                 return (
@@ -1949,8 +2100,13 @@ function App() {
                                     {selectedBosses.length ? selectedBosses.map(({ item, option }) => {
                                       const recommendation = bossRecommendationForCharacter(character, characterMultipliers, option);
                                       const sizeLabel = recommendation.recommendedPartySize
-                                        ? recommendationPartyLabel(recommendation.recommendedPartySize)
+                                        ? recommendation.recommendedPartySize === 1
+                                          ? '솔플 가능'
+                                          : recommendationPartyLabel(recommendation.recommendedPartySize)
                                         : '불가능';
+                                      const multiplierLabel = recommendation.multiplier === null
+                                        ? '배율 미기록'
+                                        : `${recommendation.multiplier.toFixed(1)}%`;
                                       const pending = isIncomplete(item, true);
                                       const icon = bossImageFor(option.bossId);
                                       return (
@@ -1959,7 +2115,9 @@ function App() {
                                           <span className="boss-card-info">
                                             <strong>{option.name || item.content_name}</strong>
                                             <em className={`boss-card-difficulty difficulty-${option.difficulty}`}>{option.difficultyLabel || '-'}</em>
-                                            <small className="boss-card-size">{sizeLabel}</small>
+                                            <small className={`boss-card-recommendation ${recommendation.recommendedPartySize ? `party-size-${recommendation.recommendedPartySize}` : 'impossible'}`}>
+                                              <strong>{sizeLabel}</strong><span>{multiplierLabel}</span>
+                                            </small>
                                           </span>
                                         </span>
                                       );
@@ -2027,44 +2185,7 @@ function App() {
                           <div><p className="eyebrow">PARTY BUILDER</p><h2>파티 빠른 편성</h2></div>
                           <span className="updated-count">{currentGroupParties.length} 파티</span>
                         </div>
-                        <p className="group-boss-picker-hint">보스 아이콘을 찾고 난이도를 누르면 파티 편성 창이 열립니다. 파티는 추천만 표시하며 자동으로 구성하지 않습니다.</p>
-                        <div className="group-boss-family-list" aria-label="파티를 구성할 보스">
-                          {groupBossFamilies.map((family) => {
-                            const representative = family.bosses.at(-1);
-                            const icon = bossImageFor(representative.bossId);
-                            const familyParties = currentGroupParties.filter(({ familyId, bossId }) => (
-                              (familyId || bossDetails(bossId).familyId) === family.familyId
-                            ));
-                            return (
-                              <article className="group-boss-family-option" key={family.familyId}>
-                                {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder">◇</span>}
-                                <strong>{family.name}</strong>
-                                <div className="group-boss-difficulty-buttons" aria-label={`${family.name} 난이도`}>
-                                  {family.bosses.slice().sort((left, right) => (
-                                    ['easy', 'normal', 'hard', 'chaos', 'extreme'].indexOf(left.difficulty)
-                                    - ['easy', 'normal', 'hard', 'chaos', 'extreme'].indexOf(right.difficulty)
-                                  )).map((boss) => {
-                                    const partiesForBoss = familyParties.filter(({ bossId }) => bossId === boss.bossId);
-                                    return (
-                                      <button
-                                        className={`group-boss-difficulty difficulty-${boss.difficulty} ${quickPartyBossId === boss.bossId ? 'selected' : ''}`}
-                                        type="button"
-                                        key={boss.bossId}
-                                        aria-pressed={quickPartyBossId === boss.bossId}
-                                        aria-label={`${boss.difficultyLabel} ${boss.name} 파티 편성${partiesForBoss.length ? `, 파티 ${partiesForBoss.length}개` : ''}`}
-                                        title={`${boss.difficultyLabel} ${boss.name}${partiesForBoss.length ? ` · 파티 ${partiesForBoss.length}개` : ''}`}
-                                        onClick={() => setQuickPartyBossId(boss.bossId)}
-                                      >
-                                        {difficultyMarks[boss.difficulty] || boss.difficultyLabel.slice(0, 1)}
-                                        {partiesForBoss.length > 0 && <small>{partiesForBoss.length}</small>}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </article>
-                            );
-                          })}
-                        </div>
+                        <p className="group-boss-picker-hint">보스 난이도를 선택하면 빈 파티가 바로 추가됩니다. 편성할 파티를 선택한 뒤 캐릭터를 추가하거나 드래그하세요.</p>
                         <section className="group-main-party-overview" aria-label="편성된 파티">
                           <div className="group-main-party-overview-heading">
                             <h3>편성된 파티</h3>
@@ -2075,7 +2196,7 @@ function App() {
                                   <button className="outline-button" type="button" onClick={discardPartyDraft} disabled={busy === 'party-save'}>
                                     변경 취소
                                   </button>
-                                  <button className="primary-button" type="button" onClick={savePartyDraft} disabled={busy === 'party-save'}>
+                                  <button className="primary-button" type="button" onClick={() => savePartyDraft()} disabled={busy === 'party-save'}>
                                     {busy === 'party-save' ? '저장 중...' : '완료 · 변경 저장'}
                                   </button>
                                 </>
@@ -2095,7 +2216,8 @@ function App() {
                                   || members.every(({ ownerSub }) => ownerSub === account?.sub);
                                 return (
                                   <article
-                                    className={`group-main-party-card ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
+                                    className={`group-main-party-card ${focusedPartyId === party.partyId ? 'focused' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
+                                    id={`group-party-${party.partyId}`}
                                     key={party.partyId}
                                     onDragOver={(event) => dragOverParty(event, party)}
                                     onDragLeave={(event) => {
@@ -2161,9 +2283,13 @@ function App() {
                                     <button
                                       className="group-main-party-open"
                                       type="button"
-                                      onClick={() => setQuickPartyBossId(party.bossId)}
+                                      aria-pressed={focusedPartyId === party.partyId}
+                                      onClick={() => {
+                                        setFocusedPartyId(party.partyId);
+                                        setQuickPartyBossId(party.bossId);
+                                      }}
                                     >
-                                      파티 편성 열기
+                                      이 파티에 캐릭터 편성
                                     </button>
                                   </article>
                                 );
@@ -2174,191 +2300,19 @@ function App() {
                           )}
                         </section>
                         {selectedQuickPartyBoss && (
-                          <div
-                            className="group-party-modal-backdrop"
-                            role="presentation"
-                            onClick={(event) => {
-                              if (event.target === event.currentTarget) setQuickPartyBossId('');
-                            }}
-                          >
-                            <section
-                              className="group-party-modal"
-                              role="dialog"
-                              aria-modal="true"
-                              aria-labelledby="group-party-modal-title"
-                              onClick={(event) => event.stopPropagation()}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Escape') setQuickPartyBossId('');
-                              }}
-                              tabIndex={-1}
-                            >
-                              <header className="group-party-modal-heading">
-                                <div>
-                                  <p className="eyebrow">PARTY BUILDER · {selectedQuickPartyBoss.difficultyLabel}</p>
-                                  <h3 id="group-party-modal-title">{selectedQuickPartyBoss.name} 파티 편성</h3>
-                                  <p>파티 합산 배율이 100% 이상이면 클리어 가능해요. 추천 파티원 수는 자동 편성이 아닌 참고 정보입니다.</p>
-                                </div>
-                                {bossImageFor(selectedQuickPartyBoss.bossId) && (
-                                  <img src={bossImageFor(selectedQuickPartyBoss.bossId)} alt="" />
-                                )}
-                                <button className="outline-button" type="button" autoFocus onClick={() => setQuickPartyBossId('')}>취소</button>
-                              </header>
-                              <div className="group-quick-party-toolbar">
-                                <span className="updated-count">최대 {selectedQuickPartyBoss.maxPartySize}인 · {quickPartyCandidates.length}명 편성 가능</span>
-                                <button
-                                  className="outline-button"
-                                  type="button"
-                                  disabled={busy === 'party-save'}
-                                  onClick={() => createEmptyBossParty(selectedQuickPartyBoss)}
-                                >
-                                  + 같은 보스 파티 추가
-                                </button>
+                          <section className="group-quick-party-editor" aria-label={`${selectedQuickPartyBoss.name} 파티 편성 후보`}>
+                            <header className="group-quick-party-editor-heading">
+                              <div>
+                                <p className="eyebrow">PARTY BUILDER · {selectedQuickPartyBoss.difficultyLabel}</p>
+                                <h3>{selectedQuickPartyBoss.name} 파티 편성</h3>
+                                <p>대상: {focusedQuickPartyNumber ? `${focusedQuickPartyNumber}번째 파티` : '파티를 선택하세요'} · 클리어 기준은 파티 합산 배율 100%입니다.</p>
                               </div>
-                        {currentGroupParties.filter(({ bossId }) => bossId === selectedQuickPartyBoss.bossId).length ? (
-                          <div className="group-quick-party-grid">
-                            {currentGroupParties.filter(({ bossId }) => bossId === selectedQuickPartyBoss.bossId).map((party) => {
-                              const config = bossDetails(party.bossId);
-                              const summary = summarizeBossParty(party);
-                              const members = party.members || [];
-                              const icon = bossImageFor(party.bossId);
-                              const sameBossPartyNumber = currentGroupParties
-                                .filter(({ bossId }) => bossId === party.bossId)
-                                .findIndex(({ partyId }) => partyId === party.partyId) + 1;
-                              const canDeleteParty = selectedGroup.role === 'admin'
-                                || members.every(({ ownerSub }) => ownerSub === account?.sub);
-                              return (
-                                <article
-                                  className={`group-quick-party-card ${focusedPartyId === party.partyId ? 'focused' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
-                                  id={`group-party-${party.partyId}`}
-                                  key={party.partyId}
-                                  onDragOver={(event) => dragOverParty(event, party)}
-                                  onDragLeave={(event) => {
-                                    if (!event.currentTarget.contains(event.relatedTarget)) setDragOverPartyId('');
-                                  }}
-                                  onDrop={(event) => dropCharacterOnParty(event, party)}
-                                >
-                                  <header className="group-quick-party-heading">
-                                    {icon ? <img src={icon} alt="" /> : <span className="boss-placeholder">◇</span>}
-                                    <span className="group-quick-party-title">
-                                      <small
-                                        className={`party-difficulty-mark difficulty-${config.difficulty}`}
-                                        title={config.difficultyLabel}
-                                        aria-label={`${config.difficultyLabel} 난이도`}
-                                      >
-                                        {difficultyMarks[config.difficulty] || '?'}
-                                      </small>
-                                      <strong>{config.name}</strong>
-                                    </span>
-                                    <b>{members.length}/{config.maxPartySize}인</b>
-                                    {canDeleteParty && (
-                                      <button
-                                        className="party-remove-button"
-                                        type="button"
-                                        aria-label={`${config.difficultyLabel} ${config.name} ${sameBossPartyNumber}번째 파티 삭제`}
-                                        title="파티 삭제"
-                                        onClick={() => removePartyDraft(party.partyId)}
-                                      >×</button>
-                                    )}
-                                  </header>
-                                  <div className="group-quick-party-members">
-                                    {members.map((member) => (
-                                      <article
-                                        className="group-quick-party-member"
-                                        key={`${member.ownerSub}:${member.ocid}`}
-                                        draggable={member.ownerSub === account?.sub || selectedGroup.role === 'admin'}
-                                        onDragStart={(event) => startPartyMemberDrag(event, member)}
-                                        onDragEnd={finishPartyMemberDrag}
-                                      >
-                                        {member.image
-                                          ? <img src={member.image} alt={`${member.nickname} 캐릭터`} />
-                                          : <span className="group-quick-party-member-fallback">{member.nickname.slice(0, 1)}</span>}
-                                        <span><strong>{member.nickname}</strong><small>배율 {Number(member.multiplier || 0).toFixed(1)}%</small></span>
-                                        {(member.ownerSub === account?.sub || selectedGroup.role === 'admin') && (
-                                          <button
-                                            type="button"
-                                            aria-label={`${member.nickname} ${config.name} 파티에서 제외`}
-                                            onClick={() => unassignBossFromCharacter(member, party.bossId, party.partyId)}
-                                          >×</button>
-                                        )}
-                                      </article>
-                                    ))}
-                                    <div className="group-quick-party-drop-hint">여기로 캐릭터 카드를 드래그해도 편성할 수 있습니다.</div>
-                                  </div>
-                                  <div className={`party-summary ${summary.ready ? 'ready' : ''} ${summary.cleared ? 'cleared' : ''}`}>
-                                    <span>파티 배율 <strong>{summary.totalMultiplier.toFixed(1)}%</strong></span>
-                                    <span>{summary.cleared ? '클리어 완료' : summary.ready ? '클리어 가능' : `${Math.max(0, 100 - summary.totalMultiplier).toFixed(1)}% 더 필요`}</span>
-                                  </div>
-                                </article>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="empty-state compact">
-                            <strong>아직 파티가 없습니다</strong>
-                            <p>새 파티를 만들거나 후보 캐릭터를 편성하면 파티가 시작됩니다.</p>
-                          </div>
-                        )}
-                        <div className="group-quick-roster">
-                          <div className="group-quick-roster-heading">
-                            <div><h3>{selectedQuickPartyBoss ? '편성 가능한 캐릭터' : '그룹 캐릭터'}</h3>
-                              <p>선택 보스의 배율이 높은 순으로 표시합니다. 이미 같은 보스 파티에 편성된 캐릭터는 제외됩니다.</p>
-                            </div>
-                            <span>{quickPartyCandidates.length}명</span>
-                          </div>
-                          {quickPartyCandidates.length ? (
-                            <div className="group-quick-roster-grid">
-                              {quickPartyCandidates.map((character) => {
-                                const canManage = character.ownerSub === account?.sub || selectedGroup.role === 'admin';
-                                return (
-                                  <article
-                                    className="group-quick-roster-card"
-                                    key={`${character.ownerSub}:${character.ocid}`}
-                                    draggable={canManage}
-                                    onDragStart={(event) => startPartyMemberDrag(event, character)}
-                                    onDragEnd={finishPartyMemberDrag}
-                                  >
-                                    {character.image
-                                      ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
-                                      : <span className="group-quick-party-member-fallback">{character.nickname.slice(0, 1)}</span>}
-                                    <span className="group-quick-roster-details">
-                                      <strong>{character.nickname}</strong>
-                                      <small>Lv. {character.level || '-'} · 헥사 {Number(character.boss380HexaScore || 0).toLocaleString('ko-KR')}</small>
-                                      {selectedQuickPartyBoss && (
-                                        <b>보스 배율 {character.quickMultiplier.toFixed(1)}%</b>
-                                      )}
-                                    </span>
-                                    {selectedQuickPartyBoss && canManage && (
-                                      <button
-                                        className="primary-button"
-                                        type="button"
-                                        disabled={busy === 'party-save'}
-                                        onClick={() => quickAssignCharacter(character)}
-                                      >
-                                        파티에 추가
-                                      </button>
-                                    )}
-                                  </article>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="empty-state compact">
-                              <strong>{groupCharacters.length ? '편성 가능한 캐릭터가 없습니다' : '그룹에 참여한 캐릭터가 없습니다'}</strong>
-                              <p>{selectedQuickPartyBoss ? '이 보스에 이미 편성된 캐릭터는 후보에서 제외됩니다.' : '그룹 관리에서 먼저 캐릭터를 참여시켜 주세요.'}</p>
-                            </div>
-                          )}
-                        </div>
-                        <div className="group-party-modal-actions">
-                          <span>{partyDraft?.groupId === selectedGroupId ? '편성은 임시 저장 중입니다. 완료하면 변경 사항이 서버에 반영됩니다.' : '드래그하거나 캐릭터를 추가해 편성을 변경하세요.'}</span>
-                          <button className="outline-button" type="button" onClick={discardPartyDraft} disabled={!partyDraft || busy === 'party-save'}>
-                            변경 취소
-                          </button>
-                          <button className="primary-button" type="button" onClick={() => (partyDraft ? savePartyDraft() : setQuickPartyBossId(''))} disabled={busy === 'party-save'}>
-                            {busy === 'party-save' ? '저장 중...' : '완료'}
-                          </button>
-                        </div>
-                            </section>
-                          </div>
+                              {bossImageFor(selectedQuickPartyBoss.bossId) && (
+                                <img src={bossImageFor(selectedQuickPartyBoss.bossId)} alt="" />
+                              )}
+                              <button className="outline-button" type="button" onClick={() => setQuickPartyBossId('')}>닫기</button>
+                            </header>
+                          </section>
                         )}
                       </section>
                     </>
@@ -2485,91 +2439,6 @@ function App() {
                         <button className="outline-button" type="button" onClick={() => setView('group')}>← 그룹 메인으로</button>
                       </section>
 
-                      <section className="group-settings-card panel-section">
-                        <div className="section-heading">
-                          <div><p className="eyebrow">GROUP APPEARANCE</p><h2>그룹 대표 이미지</h2></div>
-                          {selectedGroup.role !== 'admin' && <span className="updated-count">관리자만 변경 가능</span>}
-                        </div>
-                        <div className="group-image-options" aria-label="그룹 대표 이미지 선택">
-                          <button
-                            className={`group-image-option ${!selectedGroup.mainImageBossId ? 'selected' : ''}`}
-                            type="button"
-                            disabled={selectedGroup.role !== 'admin' || busy === 'group-image'}
-                            aria-pressed={!selectedGroup.mainImageBossId}
-                            onClick={() => updateGroupImage(null)}
-                          >
-                            <span>{selectedGroup.name.slice(0, 1)}</span><small>기본</small>
-                          </button>
-                          {groupBossFamilies.map((family) => {
-                            const imageBoss = family.bosses.at(-1);
-                            const image = bossImageFor(imageBoss.bossId);
-                            return (
-                              <button
-                                className={`group-image-option ${selectedGroup.mainImageBossId === imageBoss.bossId ? 'selected' : ''}`}
-                                type="button"
-                                key={family.familyId}
-                                disabled={selectedGroup.role !== 'admin' || busy === 'group-image'}
-                                aria-label={`${family.name} 아이콘으로 설정`}
-                                aria-pressed={selectedGroup.mainImageBossId === imageBoss.bossId}
-                                onClick={() => updateGroupImage(imageBoss.bossId)}
-                              >
-                                {image ? <img src={image} alt="" /> : <span>◇</span>}<small>{family.name}</small>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {selectedGroup.role === 'admin' && (
-                          <p className="group-settings-note">현재 앱의 보스 아이콘 중 하나를 선택합니다. 이미지는 그룹 사이드바에 표시됩니다.</p>
-                        )}
-                      </section>
-
-                      {selectedGroup.role === 'admin' && (
-                        <section className="group-danger-zone">
-                          <div>
-                            <p className="eyebrow">DANGER ZONE</p>
-                            <h2>그룹 삭제</h2>
-                            <p>그룹 파티와 참여 정보가 함께 삭제되며 복구할 수 없습니다.</p>
-                          </div>
-                          {!showGroupDeleteConfirmation ? (
-                            <button
-                              className="logout-danger-button"
-                              type="button"
-                              onClick={() => setShowGroupDeleteConfirmation(true)}
-                            >그룹 삭제</button>
-                          ) : (
-                            <div className="group-delete-confirmation" role="alert">
-                              <strong>“{selectedGroup.name}” 그룹을 정말 삭제할까요?</strong>
-                              <button className="outline-button" type="button" onClick={() => setShowGroupDeleteConfirmation(false)}>취소</button>
-                              <button
-                                className="logout-danger-button"
-                                type="button"
-                                disabled={busy === 'group-delete'}
-                                onClick={deleteSelectedGroup}
-                              >{busy === 'group-delete' ? '삭제 중...' : '삭제 확인'}</button>
-                            </div>
-                          )}
-                        </section>
-                      )}
-
-                      <section className="group-invite-section">
-                        <div>
-                          <p className="eyebrow">INVITE MEMBERS</p>
-                          <h2>{selectedGroup.name} 초대 링크</h2>
-                          <p>링크는 생성 시점부터 7일간 유효하며 로그인 후 그룹에 참여합니다.</p>
-                        </div>
-                        {selectedGroup.role === 'admin' ? (
-                          <button className="primary-button" type="button" onClick={createGroupInvite} disabled={busy === 'invite'}>
-                            {busy === 'invite' ? '링크 생성 중...' : '초대 링크 만들기'}
-                          </button>
-                        ) : <span className="updated-count">그룹 관리자만 초대 링크를 만들 수 있습니다</span>}
-                        {inviteLink && (
-                          <div className="invite-link-field">
-                            <input aria-label="그룹 초대 링크" readOnly value={inviteLink} onFocus={(event) => event.target.select()} />
-                            <button className="outline-button" type="button" onClick={copyGroupInvite}>링크 복사</button>
-                          </div>
-                        )}
-                      </section>
-
                       <section className="group-character-picker panel-section">
                         <div className="section-heading">
                           <div><p className="eyebrow">ADD YOUR CHARACTERS</p><h2>그룹에 참여시킬 캐릭터</h2></div>
@@ -2598,6 +2467,90 @@ function App() {
                           </div>
                         ) : <div className="empty-state compact"><strong>실사용 캐릭터가 없습니다</strong><p>계정 설정에서 먼저 사용할 캐릭터를 선택하세요.</p></div>}
                       </section>
+
+                      <section className="group-invite-section">
+                        <div>
+                          <p className="eyebrow">INVITE MEMBERS</p>
+                          <h2>{selectedGroup.name} 초대 링크</h2>
+                          <p>링크는 생성 시점부터 7일간 유효하며 로그인 후 그룹에 참여합니다.</p>
+                        </div>
+                        {selectedGroup.role === 'admin' ? (
+                          <button className="primary-button" type="button" onClick={createGroupInvite} disabled={busy === 'invite'}>
+                            {busy === 'invite' ? '링크 생성 중...' : '초대 링크 만들기'}
+                          </button>
+                        ) : <span className="updated-count">그룹 관리자만 초대 링크를 만들 수 있습니다</span>}
+                        {inviteLink && (
+                          <div className="invite-link-field">
+                            <input aria-label="그룹 초대 링크" readOnly value={inviteLink} onFocus={(event) => event.target.select()} />
+                            <button className="outline-button" type="button" onClick={copyGroupInvite}>링크 복사</button>
+                          </div>
+                        )}
+                      </section>
+
+                      {selectedGroup.role === 'admin' && (
+                        <>
+                          <section className="group-settings-card panel-section">
+                            <div className="section-heading">
+                              <div><p className="eyebrow">GROUP APPEARANCE</p><h2>그룹 대표 이미지</h2></div>
+                            </div>
+                            <div className="group-image-options" aria-label="그룹 대표 이미지 선택">
+                              <button
+                                className={`group-image-option ${!selectedGroup.mainImageBossId ? 'selected' : ''}`}
+                                type="button"
+                                disabled={busy === 'group-image'}
+                                aria-pressed={!selectedGroup.mainImageBossId}
+                                onClick={() => updateGroupImage(null)}
+                              >
+                                <span>{selectedGroup.name.slice(0, 1)}</span><small>기본</small>
+                              </button>
+                              {groupBossFamilies.map((family) => {
+                                const imageBoss = family.bosses.at(-1);
+                                const image = bossImageFor(imageBoss.bossId);
+                                return (
+                                  <button
+                                    className={`group-image-option ${selectedGroup.mainImageBossId === imageBoss.bossId ? 'selected' : ''}`}
+                                    type="button"
+                                    key={family.familyId}
+                                    disabled={busy === 'group-image'}
+                                    aria-label={`${family.name} 아이콘으로 설정`}
+                                    aria-pressed={selectedGroup.mainImageBossId === imageBoss.bossId}
+                                    onClick={() => updateGroupImage(imageBoss.bossId)}
+                                  >
+                                    {image ? <img src={image} alt="" /> : <span>◇</span>}<small>{family.name}</small>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <p className="group-settings-note">현재 앱의 보스 아이콘 중 하나를 선택합니다. 이미지는 그룹 사이드바에 표시됩니다.</p>
+                          </section>
+
+                          <section className="group-danger-zone">
+                            <div>
+                              <p className="eyebrow">DANGER ZONE</p>
+                              <h2>그룹 삭제</h2>
+                              <p>그룹 파티와 참여 정보가 함께 삭제되며 복구할 수 없습니다.</p>
+                            </div>
+                            {!showGroupDeleteConfirmation ? (
+                              <button
+                                className="logout-danger-button"
+                                type="button"
+                                onClick={() => setShowGroupDeleteConfirmation(true)}
+                              >그룹 삭제</button>
+                            ) : (
+                              <div className="group-delete-confirmation" role="alert">
+                                <strong>“{selectedGroup.name}” 그룹을 정말 삭제할까요?</strong>
+                                <button className="outline-button" type="button" onClick={() => setShowGroupDeleteConfirmation(false)}>취소</button>
+                                <button
+                                  className="logout-danger-button"
+                                  type="button"
+                                  disabled={busy === 'group-delete'}
+                                  onClick={deleteSelectedGroup}
+                                >{busy === 'group-delete' ? '삭제 중...' : '삭제 확인'}</button>
+                              </div>
+                            )}
+                          </section>
+                        </>
+                      )}
 
                       {false && <section className="group-party-builder panel-section">
                         <div className="section-heading">
@@ -2660,7 +2613,7 @@ function App() {
                                       aria-label={`${boss.difficultyLabel} ${boss.name}`}
                                       title={boss.difficultyLabel}
                                     >
-                                      {{ easy: 'E', normal: 'N', hard: 'H', extreme: 'X', chaos: 'C' }[boss.difficulty] || boss.difficultyLabel}
+                                      {{ easy: 'E', normal: 'N', hard: 'H', extreme: 'E', chaos: 'C' }[boss.difficulty] || boss.difficultyLabel}
                                     </button>
                                   ))}
                                 </div>
@@ -2867,6 +2820,7 @@ function App() {
           <footer className="page-footer"><span>MAPLE / SCOUT</span><span>Nexon Scheduler · Cloudflare D1</span></footer>
         </main>
       </div>
+      {view === 'group' && selectedGroup && groupCharacterQuickMenu}
     </div>
   );
 }

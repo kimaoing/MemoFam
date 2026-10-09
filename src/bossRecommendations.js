@@ -1,8 +1,43 @@
 import bossRecommendationSettings from './boss-recommendations.json';
 
+const unrecordedSoloFamilyAliases = {
+  '스우': 'lotus',
+  '진힐라': 'verushilla',
+  '듄켈': 'darknell',
+  '윌': 'will',
+  '가디언엔젤슬라임': 'slime',
+  '더스크': 'gloom',
+  '루시드': 'lucid',
+  '데미안': 'damien',
+  '파풀라투스': 'papulatus',
+  '시그너스': 'cygnus',
+  '핑크빈': 'pinkbean',
+  '힐라': 'hilla',
+  '매그너스': 'magnus',
+  '아카이럼': 'arkarium',
+  '반레온': 'vonleon',
+  '반반': 'banban',
+  '벨룸': 'vellum',
+  '블러디퀸': 'bloodyqueen',
+  '자쿰': 'zakum',
+  '카웅': 'kawoong',
+  '피에르': 'pierre',
+  '혼테일': 'horntail',
+};
+
+function isAssumedSoloBoss(boss) {
+  if (boss.difficulty === 'extreme') return false;
+  const normalizedName = String(boss.name || '').replace(/\s+/g, '');
+  const familyId = boss.familyId || unrecordedSoloFamilyAliases[normalizedName];
+  return bossRecommendationSettings.unrecordedSoloBossIds.includes(boss.bossId)
+    || bossRecommendationSettings.unrecordedSoloFamilies.includes(familyId);
+}
+
 export function maxPartySizeForBoss(boss) {
-  return bossRecommendationSettings.maxPartySizeByBoss?.[boss.bossId.toLowerCase()]
-    || bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
+  const bossId = String(boss.bossId || '').toLowerCase();
+  const familyId = boss.familyId || boss.familyKey;
+  return bossRecommendationSettings.maxPartySizeByBoss?.[bossId]
+    || bossRecommendationSettings.maxPartySizeByFamily[familyId]
     || bossRecommendationSettings.defaultMaxPartySize;
 }
 
@@ -49,7 +84,7 @@ export function bossRecommendationForCharacter(character, multipliers, boss) {
       recommendationStatus: 'impossible',
     };
   }
-  const isAssumedSolo = bossRecommendationSettings.unrecordedSoloBossIds.includes(boss.bossId);
+  const isAssumedSolo = isAssumedSoloBoss(boss);
   return {
     ...boss,
     multiplier: null,
@@ -76,7 +111,7 @@ export function recommendationsForCharacter(character, multipliers, { includeSol
     const familiesWithRecordedRecommendations = new Set(candidatesByFamily.keys());
     for (const boss of bossRecommendationSettings.bosses) {
       if (familiesWithRecordedRecommendations.has(boss.familyId)
-        || !bossRecommendationSettings.unrecordedSoloBossIds.includes(boss.bossId)) continue;
+        || !isAssumedSoloBoss(boss)) continue;
       const familyCandidates = candidatesByFamily.get(boss.familyId) || [];
       familyCandidates.push({
         ...boss,

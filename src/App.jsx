@@ -207,7 +207,7 @@ function maxPartySizeForBoss(boss) {
     || bossRecommendationSettings.defaultMaxPartySize;
 }
 
-function recommendationsForCharacter(character, multipliers) {
+function recommendationsForCharacter(character, multipliers, { includeSolo = false } = {}) {
   const multiplierByBoss = new Map();
   for (const entry of multipliers) {
     if (entry.nickname?.toLocaleLowerCase('ko') !== character.nickname.toLocaleLowerCase('ko')) continue;
@@ -225,7 +225,7 @@ function recommendationsForCharacter(character, multipliers) {
         partySize <= maxPartySize && multiplier >= minimumMultiplier
       ))
       .sort((left, right) => left.partySize - right.partySize)[0];
-    if (!party || party.partySize === 1) continue;
+    if (!party || (party.partySize === 1 && !includeSolo)) continue;
     const candidate = {
       ...boss,
       multiplier,
@@ -1805,7 +1805,7 @@ function App() {
                           const recommendedBossIds = new Set(
                             recommendationsForCharacter(character, accountMultipliers.filter((entry) => (
                               entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
-                            ))).map(({ bossId }) => bossId),
+                            )), { includeSolo: true }).map(({ bossId }) => bossId),
                           );
                           const scheduleBossGroups = [];
                           for (const entry of availableBosses) {

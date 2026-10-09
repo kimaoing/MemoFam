@@ -58,21 +58,6 @@ button:disabled { cursor: wait; opacity: .65; }
 .notice.success { border-color: #3caa74; background: #e7f5ee; color: #266744; }
 .notice.error { border-color: #d45f67; background: #fff0f0; color: #79363d; }
 
-.maplescouter-import-backdrop { position: fixed; z-index: 40; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(17, 20, 29, .62); }
-.maplescouter-import-dialog { display: grid; width: min(560px, 100%); max-height: min(88vh, 760px); gap: 12px; overflow: auto; padding: 22px; border: 1px solid #dce0e8; border-radius: 8px; background: #fff; color: #303545; box-shadow: 0 24px 80px rgba(0, 0, 0, .24); }
-.maplescouter-import-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.maplescouter-import-heading h2 { margin: 5px 0; font-size: 19px; }
-.maplescouter-import-heading p:last-child { margin: 0; color: #7c8291; font-size: 12px; line-height: 1.6; }
-.maplescouter-import-label { margin-top: 4px; color: #555c6c; font-size: 11px; font-weight: 700; }
-.maplescouter-bookmarklet-code { width: 100%; min-height: 70px; resize: vertical; padding: 9px 11px; border: 1px solid #dfe2e9; border-radius: 6px; background: #f8f9fc; color: #565d6c; font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
-.maplescouter-import-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.maplescouter-import-help { flex: 1; color: #858b98; font-size: 10px; line-height: 1.5; }
-.maplescouter-import-select { width: 100%; min-height: 40px; padding: 0 11px; border: 1px solid #dfe2e9; border-radius: 6px; background: #fff; color: #303545; font: inherit; font-size: 12px; }
-.maplescouter-import-preview { display: grid; gap: 5px; padding: 12px; border: 1px solid #d9e8df; border-radius: 6px; background: #f2f8f4; color: #45624e; font-size: 12px; }
-.maplescouter-import-preview strong { color: #293c30; font-size: 14px; }
-.maplescouter-import-waiting { margin: 0; padding: 12px; border: 1px dashed #d6dae4; border-radius: 6px; color: #858b98; font-size: 12px; }
-.maplescouter-import-footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 4px; padding-top: 13px; border-top: 1px solid #e5e7ed; }
-
 .login-panel { display: grid; width: min(100%, 500px); justify-items: center; margin: 9vh auto 0; padding: 44px 42px; border: 1px solid #e1e4eb; border-radius: 14px; background: #fff; box-shadow: 0 16px 48px rgba(31, 39, 60, .06); text-align: center; }
 .login-symbol { display: grid; width: 54px; height: 54px; place-items: center; margin-bottom: 20px; border-radius: 17px; background: #6579d6; color: #fff; font-size: 25px; font-weight: 800; }
 .login-panel h2 { margin: 13px 0 11px; font-size: 23px; line-height: 1.55; }
@@ -298,24 +283,6 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .login-panel { box-shadow: 0 16px 48px rgba(0, 0, 0, .25); }
 .app-shell[data-theme='dark'] .notice.success { border-color: #3caa74; background: #1d352b; color: #a7e1c1; }
 .app-shell[data-theme='dark'] .notice.error { border-color: #d45f67; background: #3b2529; color: #f0b6bb; }
-.app-shell[data-theme='dark'] .maplescouter-import-dialog { border-color: #414657; background: #20232e; color: #e7e9f1; }
-.app-shell[data-theme='dark'] .maplescouter-import-heading h2,
-.app-shell[data-theme='dark'] .maplescouter-import-preview strong { color: #eef0f7; }
-.app-shell[data-theme='dark'] .maplescouter-import-heading p:last-child,
-.app-shell[data-theme='dark'] .maplescouter-import-help,
-.app-shell[data-theme='dark'] .maplescouter-import-waiting { color: #a1a6b6; }
-.app-shell[data-theme='dark'] .maplescouter-import-label { color: #c9cdd8; }
-.app-shell[data-theme='dark'] .maplescouter-bookmarklet-code,
-.app-shell[data-theme='dark'] .maplescouter-import-select { border-color: #414657; background: #191c25; color: #e8eaf2; }
-.app-shell[data-theme='dark'] .maplescouter-import-preview { border-color: #335242; background: #1d352b; color: #a7e1c1; }
-.app-shell[data-theme='dark'] .maplescouter-import-footer { border-color: #343847; }
-
-@media (max-width: 560px) {
-  .maplescouter-import-backdrop { align-items: end; padding: 8px; }
-  .maplescouter-import-dialog { max-height: 92dvh; padding: 17px; }
-  .maplescouter-import-footer { flex-wrap: wrap; }
-  .maplescouter-import-footer button { flex: 1; }
-}
 
 html[data-theme='dark'] { background: #171922; color-scheme: dark; }
 html[data-theme='light'] { background: #f4f5f8; color-scheme: light; }

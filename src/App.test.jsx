@@ -48,7 +48,7 @@ test('restores the Google session silently when login retention is enabled', asy
     if (url.includes('googleapis.com/oauth2/v3/userinfo')) {
       return Response.json({ email: 'member@example.test', name: 'Member' });
     }
-    const path = new URL(url).pathname;
+    const path = new URL(url, 'http://localhost').pathname;
     return Response.json(path === '/api/groups' ? { groups: [] } : { characters: [] });
   });
   vi.stubGlobal('google', {
@@ -118,8 +118,7 @@ test('remembers the Nexon API key in a cookie only when requested', async () => 
 
 test('syncs all characters with one Nexon API key and refreshes a selected character', async () => {
   const workerCalls = [];
-  const mapleScouterPopup = {};
-  vi.spyOn(window, 'open').mockReturnValue(mapleScouterPopup);
+  const localScrapeCalls = [];
   const syncedCharacters = [
     {
       nickname: '오잉느',
@@ -169,13 +168,21 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   ];
   vi.stubGlobal('fetch', async (input, init = {}) => {
     const url = String(input);
-    const path = new URL(url).pathname;
+    const path = new URL(url, 'http://localhost').pathname;
     const method = init.method || 'GET';
     if (url.includes('googleapis.com/oauth2/v3/userinfo')) {
       return Response.json({ email: 'member@example.test', name: 'Member' });
     }
 
     const request = init.body ? JSON.parse(init.body) : {};
+    if (url === '/api/maplescouter/multipliers') {
+      localScrapeCalls.push({ method, request });
+      return Response.json({
+        nickname: '아잉느',
+        boss380HexaScore: 70000,
+        multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
+      });
+    }
     workerCalls.push({ path, method, init, request });
     const payload = method === 'POST' && path === '/api/characters/verify'
       ? {
@@ -245,39 +252,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByTitle('Test group'));
   expect(await screen.findByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeDefined();
   expect(screen.getByText('일일 퀘스트')).toBeDefined();
-  fireEvent.click(await screen.findByRole('button', { name: '아잉느 데이터 가져오기' }));
-  expect(window.open).toHaveBeenCalledWith(
-    'https://maplescouter.com/ko/result?name=%EC%95%84%EC%9E%89%EB%8A%90',
-    '_blank',
-  );
-  expect(await screen.findByRole('dialog', { name: 'MapleScouter 데이터 가져오기' })).toBeDefined();
-  const bookmarklet = screen.getByLabelText('북마클릿 주소').value;
-  expect(bookmarklet.startsWith('javascript:(')).toBe(true);
-  expect(bookmarklet).toContain(window.location.origin);
-  window.dispatchEvent(new MessageEvent('message', {
-    origin: 'https://maplescouter.com',
-    source: {},
-    data: {
-      type: 'maple-scout/maplescouter-import',
-      payload: { nickname: '아잉느', boss380HexaScore: 70000, multipliers: [] },
-    },
-  }));
-  expect(screen.getByText('MapleScouter 결과를 기다리는 중')).toBeDefined();
-  window.dispatchEvent(new MessageEvent('message', {
-    origin: 'https://maplescouter.com',
-    source: mapleScouterPopup,
-    data: {
-      type: 'maple-scout/maplescouter-import',
-      payload: {
-        nickname: '아잉느',
-        boss380HexaScore: 70000,
-        multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
-      },
-    },
-  }));
-  expect(await screen.findByText('보스 배율 1개')).toBeDefined();
-  fireEvent.click(screen.getByRole('button', { name: '가져온 데이터 저장' }));
+  fireEvent.click(await screen.findByRole('button', { name: '아잉느 자동 갱신' }));
   await screen.findByText('보스380 헥사 점수와 1개 보스 배율을 저장했습니다.');
+  expect(localScrapeCalls).toEqual([{ method: 'POST', request: { nickname: '아잉느' } }]);
+  expect(screen.queryByLabelText('북마클릿 주소')).toBeNull();
 
   const importCall = workerCalls.find(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import');
   expect(importCall.request).toEqual({

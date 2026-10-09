@@ -112,64 +112,6 @@ function groupCharactersByWorld(characters) {
     ));
 }
 
-function runMapleScouterBookmarklet(targetOrigin) {
-  try {
-    if (location.origin !== 'https://maplescouter.com') throw new Error('MapleScouter 결과 페이지에서 실행해 주세요.');
-    if (!window.opener || window.opener.closed) throw new Error('앱에서 연 MapleScouter 창에서 실행해 주세요.');
-    const nickname = new URL(location.href).searchParams.get('name');
-    if (!nickname) throw new Error('캐릭터 닉네임을 찾을 수 없습니다.');
-
-    const multipliers = Array.from(document.querySelectorAll('img[src*="/bossIcon/"]')).flatMap((image) => {
-      const src = image.getAttribute('src') || '';
-      const filename = new URL(src, location.origin).pathname.split('/').pop() || '';
-      const bossId = filename.replace(/\.[^.]+$/, '').trim().toLowerCase();
-      const card = image.closest('div.bg-surface-gray-surface-0');
-      const infoArea = card?.querySelector('div.relative.z-10');
-      const percentages = Array.from(infoArea?.children || []).flatMap((element) => (
-        (element.textContent || '').match(/\d+(?:\.\d+)?%/g) || []
-      ));
-      const multiplier = Number(percentages.at(-1)?.replace('%', ''));
-      return bossId && Number.isFinite(multiplier) ? [{ bossId, multiplier }] : [];
-    });
-
-    let boss380HexaScore = null;
-    for (const card of document.querySelectorAll('div.bg-surface-gray-surface-0')) {
-      const badge = Array.from(card.querySelectorAll('span'))
-        .find((element) => element.textContent?.trim() === '보스380');
-      if (!badge) continue;
-
-      let section = badge.parentElement;
-      while (section && card.contains(section)) {
-        const hexaLabel = Array.from(section.querySelectorAll('span'))
-          .find((element) => element.textContent?.trim() === '헥사');
-        const value = hexaLabel && Array.from(hexaLabel.parentElement?.children || [])
-          .find((element) => element.tagName === 'SPAN' && element !== hexaLabel);
-        if (value) {
-          const score = Number((value.textContent || '').replace(/[^\d]/g, ''));
-          boss380HexaScore = Number.isSafeInteger(score) ? score : null;
-          break;
-        }
-        section = section.parentElement;
-      }
-      break;
-    }
-
-    if (boss380HexaScore === null) throw new Error('보스380 헥사 점수를 찾지 못했습니다. 결과가 모두 표시된 뒤 다시 실행해 주세요.');
-    if (!multipliers.length) throw new Error('보스별 배율을 찾지 못했습니다. 결과가 모두 표시된 뒤 다시 실행해 주세요.');
-    window.opener.postMessage({
-      type: 'maple-scout/maplescouter-import',
-      payload: { nickname, boss380HexaScore, multipliers },
-    }, targetOrigin);
-    window.alert('앱으로 MapleScouter 데이터를 보냈습니다. 앱 탭에서 저장을 확인해 주세요.');
-  } catch (error) {
-    window.alert(error instanceof Error ? error.message : 'MapleScouter 데이터를 읽지 못했습니다.');
-  }
-}
-
-function buildMapleScouterBookmarklet(targetOrigin) {
-  return `javascript:(${runMapleScouterBookmarklet.toString()})(${JSON.stringify(targetOrigin)})`;
-}
-
 function App() {
   const [accessToken, setAccessToken] = useState('');
   const [account, setAccount] = useState(null);
@@ -190,15 +132,9 @@ function App() {
   const [rememberLogin, setRememberLogin] = useState(() => readPreference(rememberLoginKey, 'false') === 'true');
   const [rememberApiKey, setRememberApiKey] = useState(() => Boolean(readNexonApiKeyCookie()));
   const [theme, setTheme] = useState(() => readPreference(themeKey, 'dark'));
-  const [showMapleScouterImport, setShowMapleScouterImport] = useState(false);
-  const [mapleScouterImport, setMapleScouterImport] = useState(null);
-  const [mapleScouterImportGroupId, setMapleScouterImportGroupId] = useState('');
-  const [bookmarkletCopied, setBookmarkletCopied] = useState(false);
   const characterWorldGroups = groupCharactersByWorld(characters);
   const restoreLoginOnMount = useRef(rememberLogin);
   const loginRestoreAttempted = useRef(false);
-  const mapleScouterWindow = useRef(null);
-  const expectedMapleScouterNickname = useRef('');
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -279,24 +215,6 @@ function App() {
       loginRestoreAttempted.current = true;
       signIn(true);
     }
-  }, []);
-
-  useEffect(() => {
-    function receiveMapleScouterData(event) {
-      if (event.origin !== 'https://maplescouter.com' || event.source !== mapleScouterWindow.current) return;
-      if (event.data?.type !== 'maple-scout/maplescouter-import') return;
-      const payload = event.data.payload;
-      if (!payload || typeof payload.nickname !== 'string'
-        || payload.nickname.toLocaleLowerCase('ko') !== expectedMapleScouterNickname.current) {
-        setNotice({ type: 'error', text: '선택한 캐릭터의 MapleScouter 데이터가 아닙니다.' });
-        return;
-      }
-      mapleScouterWindow.current = null;
-      setMapleScouterImport(payload);
-    }
-
-    window.addEventListener('message', receiveMapleScouterData);
-    return () => window.removeEventListener('message', receiveMapleScouterData);
   }, []);
 
   function changeRememberLogin(event) {
@@ -420,52 +338,38 @@ function App() {
     }
   }
 
-  function startMapleScouterImport() {
+  async function refreshMapleScouterData() {
     const character = characters.find(({ ocid }) => ocid === selectedCharacterId);
     if (!character) return;
-    const url = new URL('/ko/result', 'https://maplescouter.com');
-    url.searchParams.set('name', character.nickname);
-    const popup = window.open(url.toString(), '_blank');
-    if (!popup) {
-      setNotice({ type: 'error', text: '팝업이 차단됐습니다. MapleScouter 팝업을 허용해 주세요.' });
-      return;
-    }
-    mapleScouterWindow.current = popup;
-    expectedMapleScouterNickname.current = character.nickname.toLocaleLowerCase('ko');
-    setMapleScouterImport(null);
-    setMapleScouterImportGroupId(view === 'group' ? selectedGroupId : '');
-    setBookmarkletCopied(false);
-    setShowMapleScouterImport(true);
+    const groupId = view === 'group' ? selectedGroupId : null;
+    setBusy('maplescouter-refresh');
     setNotice(null);
-  }
-
-  function closeMapleScouterImport() {
-    mapleScouterWindow.current = null;
-    expectedMapleScouterNickname.current = '';
-    setMapleScouterImport(null);
-    setShowMapleScouterImport(false);
-  }
-
-  async function copyMapleScouterBookmarklet() {
     try {
-      await navigator.clipboard.writeText(buildMapleScouterBookmarklet(window.location.origin));
-      setBookmarkletCopied(true);
-    } catch {
-      setNotice({ type: 'error', text: '클립보드에 복사하지 못했습니다. 아래 코드를 직접 복사해 주세요.' });
-    }
-  }
+      const scrapeResponse = await fetch('/api/maplescouter/multipliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: character.nickname }),
+      });
+      const scraped = await scrapeResponse.json().catch(() => ({}));
+      if (!scrapeResponse.ok) {
+        throw new Error(scraped.error || `로컬 크롤링 요청 오류 (${scrapeResponse.status})`);
+      }
+      if (typeof scraped.nickname !== 'string'
+        || scraped.nickname.toLocaleLowerCase('ko') !== character.nickname.toLocaleLowerCase('ko')
+        || !Number.isSafeInteger(scraped.boss380HexaScore)
+        || !Array.isArray(scraped.multipliers)) {
+        throw new Error('로컬 크롤링 결과를 확인할 수 없습니다. Vite 개발 서버와 Playwright Chromium 설치를 확인해 주세요.');
+      }
+      if (groupId && !scraped.multipliers.length) {
+        throw new Error('MapleScouter에서 보스 배율을 찾지 못했습니다. 결과가 모두 표시된 뒤 다시 시도해 주세요.');
+      }
 
-  async function saveMapleScouterImport() {
-    if (!mapleScouterImport || !selectedCharacter) return;
-    setBusy('maplescouter-import');
-    try {
-      const groupId = mapleScouterImportGroupId || null;
       const result = await workerRequest(accessToken, '/api/characters/maplescouter-import', {
         method: 'POST',
         body: JSON.stringify({
-          nickname: mapleScouterImport.nickname,
-          boss380HexaScore: mapleScouterImport.boss380HexaScore,
-          multipliers: groupId ? mapleScouterImport.multipliers : [],
+          nickname: character.nickname,
+          boss380HexaScore: scraped.boss380HexaScore,
+          multipliers: groupId ? scraped.multipliers : [],
           groupId,
         }),
       });
@@ -477,9 +381,10 @@ function App() {
       if (groupId) await loadGroupData(accessToken, groupId);
       setNotice({
         type: 'success',
-        text: `보스380 헥사 점수와 ${result.updatedMultipliers}개 보스 배율을 저장했습니다.${result.ignoredMultipliers ? ` 그룹에 없는 ${result.ignoredMultipliers}개 보스는 제외했습니다.` : ''}`,
+        text: `${groupId
+          ? `보스380 헥사 점수와 ${result.updatedMultipliers}개 보스 배율을 저장했습니다.`
+          : '보스380 헥사 점수를 저장했습니다.'}${result.ignoredMultipliers ? ` 그룹에 없는 ${result.ignoredMultipliers}개 보스는 제외했습니다.` : ''}`,
       });
-      closeMapleScouterImport();
     } catch (error) {
       reportError(error);
     } finally {
@@ -634,8 +539,8 @@ function App() {
               <h1>{viewTitle}</h1>
             </div>
             {account && view === 'group' && selectedGroup && selectedCharacter && (
-              <button className="primary-button" type="button" onClick={startMapleScouterImport} disabled={busy === 'maplescouter-import'}>
-                {`${selectedCharacter.nickname} 데이터 가져오기`}
+              <button className="primary-button" type="button" onClick={refreshMapleScouterData} disabled={busy === 'maplescouter-refresh'}>
+                {busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : `${selectedCharacter.nickname} 자동 갱신`}
               </button>
             )}
           </div>
@@ -711,10 +616,10 @@ function App() {
                         <button
                           className="outline-button character-score-refresh"
                           type="button"
-                          onClick={startMapleScouterImport}
-                          disabled={!selectedCharacter || busy === 'maplescouter-import'}
+                          onClick={refreshMapleScouterData}
+                          disabled={!selectedCharacter || busy === 'maplescouter-refresh'}
                         >
-                          MapleScouter 가져오기
+                          {busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : 'MapleScouter 자동 갱신'}
                         </button>
                       </div>
                     </div>
@@ -939,79 +844,6 @@ function App() {
                 </section>
               )}
             </>
-          )}
-          {showMapleScouterImport && (
-            <div
-              className="maplescouter-import-backdrop"
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget) closeMapleScouterImport();
-              }}
-            >
-              <section
-                className="maplescouter-import-dialog"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="maplescouter-import-title"
-              >
-                <div className="maplescouter-import-heading">
-                  <div>
-                    <p className="eyebrow">LOCAL BROWSER IMPORT</p>
-                    <h2 id="maplescouter-import-title">MapleScouter 데이터 가져오기</h2>
-                    <p>{selectedCharacter?.nickname} 결과 창에서 북마클릿을 실행하면 이 앱으로 전달됩니다.</p>
-                  </div>
-                  <button className="quiet-button" type="button" aria-label="가져오기 닫기" onClick={closeMapleScouterImport}>×</button>
-                </div>
-
-                <label className="maplescouter-import-label" htmlFor="maplescouter-bookmarklet">북마클릿 주소</label>
-                <textarea
-                  id="maplescouter-bookmarklet"
-                  className="maplescouter-bookmarklet-code"
-                  value={buildMapleScouterBookmarklet(window.location.origin)}
-                  readOnly
-                  rows={3}
-                  onFocus={(event) => event.target.select()}
-                />
-                <div className="maplescouter-import-actions">
-                  <button className="outline-button" type="button" onClick={copyMapleScouterBookmarklet}>
-                    {bookmarkletCopied ? '북마클릿 복사됨' : '북마클릿 복사'}
-                  </button>
-                  <span className="maplescouter-import-help">한 번 북마크로 저장한 뒤, 결과가 표시된 MapleScouter 탭에서 실행하세요.</span>
-                </div>
-
-                <label className="maplescouter-import-label" htmlFor="maplescouter-import-group">배율 저장 그룹</label>
-                <select
-                  id="maplescouter-import-group"
-                  className="maplescouter-import-select"
-                  value={mapleScouterImportGroupId}
-                  onChange={(event) => setMapleScouterImportGroupId(event.target.value)}
-                >
-                  <option value="">점수만 저장</option>
-                  {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-                </select>
-
-                {mapleScouterImport ? (
-                  <div className="maplescouter-import-preview" role="status">
-                    <strong>{mapleScouterImport.nickname}</strong>
-                    <span>보스380 헥사 {Number(mapleScouterImport.boss380HexaScore).toLocaleString('ko-KR')}</span>
-                    <span>보스 배율 {Array.isArray(mapleScouterImport.multipliers) ? mapleScouterImport.multipliers.length : 0}개</span>
-                  </div>
-                ) : (
-                  <p className="maplescouter-import-waiting" role="status">MapleScouter 결과를 기다리는 중</p>
-                )}
-
-                <div className="maplescouter-import-footer">
-                  <button className="outline-button" type="button" onClick={closeMapleScouterImport}>취소</button>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={saveMapleScouterImport}
-                    disabled={!mapleScouterImport || busy === 'maplescouter-import'}
-                  >
-                    {busy === 'maplescouter-import' ? '저장 중...' : '가져온 데이터 저장'}
-                  </button>
-                </div>
-              </section>
-            </div>
           )}
           <footer className="page-footer"><span>MAPLE / SCOUT</span><span>Nexon Scheduler · Cloudflare D1</span></footer>
         </main>

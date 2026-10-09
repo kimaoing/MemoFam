@@ -1773,14 +1773,13 @@ function App() {
                               return [option.key, { item, option }];
                             })).values()];
                           const selectedBossKeys = Array.isArray(preferences.bosses)
-                            ? limitBossKeysToWeeklyCap(preferences.bosses)
+                            ? limitBossKeysToWeeklyCap(preferences.bosses.filter((key) => availableBosses.some(({ option }) => option.key === key)))
                             : [];
                           const selectedBosses = availableBosses
                             .filter(({ option }) => selectedBossKeys.includes(option.key))
                             .sort((left, right) => Number(isIncomplete(right.item, true)) - Number(isIncomplete(left.item, true))
                               || bossFamilyOrder(left.option.familyKey) - bossFamilyOrder(right.option.familyKey)
                               || (bossFamilyTopPrice[right.option.familyKey] || 0) - (bossFamilyTopPrice[left.option.familyKey] || 0));
-                          const incompleteCount = selectedBosses.filter(({ item }) => isIncomplete(item, true)).length;
                           const recommendedBosses = recommendationsForCharacter(character, accountMultipliers.filter((entry) => (
                             entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
                           )), { includeSolo: true });
@@ -1806,8 +1805,7 @@ function App() {
                             <article className="my-schedule-character" key={character.ocid}>
                               <header className="my-schedule-character-heading">
                                 {character.image ? <img src={character.image} alt="" loading="lazy" /> : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
-                                <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'} · 미완료 {incompleteCount}</small></div>
-                                <span className={`schedule-total ${incompleteCount ? 'has-pending' : ''}`}>{scheduler.date || '기록 없음'}</span>
+                                <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'}</small></div>
                               </header>
                               <div className="schedule-preferences schedule-boss-only" aria-label={`${character.nickname} 보스 선택`}>
                                 <details className="schedule-boss-picker">

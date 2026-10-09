@@ -177,7 +177,7 @@ button:disabled { cursor: wait; opacity: .65; }
 
 .schedule-section { padding-top: 25px; border-top: 1px solid #e2e4eb; }
 .my-schedule-section { padding-top: 25px; border-top: 1px solid #e2e4eb; }
-.my-schedule-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 12px; }
+.my-schedule-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
 .my-schedule-character { padding: 16px; border: 1px solid #e1e4eb; border-radius: 8px; background: #fff; }
 .my-schedule-character .schedule-task-groups { grid-template-columns: 1fr; }
 .my-schedule-character-heading { display: flex; align-items: center; gap: 11px; }
@@ -431,7 +431,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-quick-party-heading > img, .group-quick-party-heading > .boss-placeholder { width: 46px; height: 46px; flex: 0 0 46px; object-fit: contain; }
 .group-quick-party-heading > span { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .group-quick-party-heading small { color: #778096; font-size: 10px; }
-.group-quick-party-heading strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.group-quick-party-heading strong { max-width: 100%; font-size: 13px; line-height: 1.25; overflow-wrap: anywhere; word-break: keep-all; }
 .group-quick-party-heading > b { flex: 0 0 auto; color: #6579ce; font-size: 11px; }
 .group-quick-party-members { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; padding-top: 10px; }
 .group-quick-party-member { display: grid; min-width: 0; grid-template-columns: 66px minmax(0, 1fr) 26px; align-items: center; gap: 8px; padding: 7px; border: 1px solid #e2e6ef; border-radius: 9px; background: #f8f9fc; }
@@ -463,7 +463,7 @@ button:disabled { cursor: wait; opacity: .65; }
   .active-character-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .active-character-option { grid-template-rows: 112px auto auto; min-height: 204px; }
   .active-character-avatar { width: 108px; height: 108px; }
-  .my-schedule-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .my-schedule-list { grid-template-columns: 1fr; }
   .character-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
   .character-tools { flex-wrap: wrap; justify-content: flex-end; }
   .schedule-character { grid-template-columns: 130px minmax(0, 1fr); }
@@ -803,11 +803,11 @@ html[data-theme='light'] body { background: #f4f5f8; }
 .icon-refresh-button .spinning { display: inline-block; animation: icon-spin .8s linear infinite; }
 @keyframes icon-spin { to { transform: rotate(360deg); } }
 .schedule-tasks:has(.boss-card) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.boss-card { position: relative; display: flex; min-width: 0; align-items: center; gap: 11px; min-height: 78px; padding: 10px 12px; border: 1px solid #f0c9a8; border-radius: 12px; background: #fff3e7; color: #6b3b13; }
-.boss-card > img, .boss-card > .boss-placeholder { width: 54px; height: 54px; flex: 0 0 54px; object-fit: contain; }
-.boss-card-info { display: grid; min-width: 0; gap: 5px; }
+.boss-card { position: relative; display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; text-align: center; border: 1px solid #f0c9a8; border-radius: 12px; background: #fff3e7; color: #6b3b13; }
+.boss-card > img, .boss-card > .boss-placeholder { width: 72px; height: 72px; flex: 0 0 72px; object-fit: contain; }
+.boss-card-info { display: grid; width: 100%; min-width: 0; justify-items: center; gap: 4px; }
 .boss-card-info strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.boss-card-difficulty { justify-self: start; padding: 2px 9px; border-radius: 6px; font-size: 11px; font-style: normal; font-weight: 800; }
+.boss-card-difficulty { justify-self: center; white-space: nowrap; padding: 2px 9px; border-radius: 6px; font-size: 11px; font-style: normal; font-weight: 800; }
 .boss-card-difficulty.difficulty-easy { background: #e3e5ea; color: #636a78; }
 .boss-card-difficulty.difficulty-normal { background: #e5edff; color: #4766b3; }
 .boss-card-difficulty.difficulty-hard { background: #ffe5e7; color: #b7505b; }

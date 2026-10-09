@@ -169,6 +169,7 @@ function App() {
   const [memberEmail, setMemberEmail] = useState('');
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
+  const [mapleScouterProgress, setMapleScouterProgress] = useState(null);
   const [showExtensionInstallHelp, setShowExtensionInstallHelp] = useState(false);
   const [view, setView] = useState('characters');
   const [showGroupForm, setShowGroupForm] = useState(false);
@@ -195,70 +196,23 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    function clearPendingRequest() {
-      if (mapleScouterTimeout.current) window.clearTimeout(mapleScouterTimeout.current);
-      mapleScouterTimeout.current = null;
-      mapleScouterPopup.current = null;
-      mapleScouterRequest.current = null;
-    }
-
-    async function saveMapleScouterResult(payload, request) {
-      try {
-        if (payload.error) throw new Error(payload.error);
-        if (typeof payload.nickname !== 'string'
-          || payload.nickname.toLocaleLowerCase('ko') !== request.nickname.toLocaleLowerCase('ko')
-          || !Number.isSafeInteger(payload.boss380HexaScore)
-          || !Array.isArray(payload.multipliers)) {
-          throw new Error('MapleScouter 확장에서 받은 결과를 확인할 수 없습니다.');
-        }
-        if (request.groupId && !payload.multipliers.length) {
-          throw new Error('MapleScouter에서 보스 배율을 찾지 못했습니다. 결과가 모두 표시된 뒤 다시 시도해 주세요.');
-        }
-
-        const result = await workerRequest(accessToken, '/api/characters/maplescouter-import', {
-          method: 'POST',
-          body: JSON.stringify({
-            nickname: request.nickname,
-            boss380HexaScore: payload.boss380HexaScore,
-            multipliers: request.groupId ? payload.multipliers : [],
-            groupId: request.groupId,
-          }),
-        });
-        setCharacters((current) => current.map((character) => (
-          character.ocid === request.ocid
-            ? { ...character, boss380HexaScore: result.boss380HexaScore }
-            : character
-        )));
-        if (request.groupId) await loadGroupData(accessToken, request.groupId);
-        setNotice({
-          type: 'success',
-          text: `${request.groupId
-            ? `보스380 헥사 점수와 ${result.updatedMultipliers}개 보스 배율을 저장했습니다.`
-            : '보스380 헥사 점수를 저장했습니다.'}${result.ignoredMultipliers ? ` 그룹에 없는 ${result.ignoredMultipliers}개 보스는 제외했습니다.` : ''}`,
-        });
-          setShowExtensionInstallHelp(false);
-      } catch (error) {
-        reportError(error);
-      } finally {
-        setBusy('');
-      }
-    }
-
     function receiveMapleScouterResult(event) {
       if (event.origin !== mapleScouterOrigin || event.source !== mapleScouterPopup.current) return;
       const request = mapleScouterRequest.current;
       const payload = event.data?.type === mapleScouterMessageType ? event.data.payload : null;
       if (!request || !payload) return;
 
-      clearPendingRequest();
-      void saveMapleScouterResult(payload, request);
+      if (mapleScouterTimeout.current) window.clearTimeout(mapleScouterTimeout.current);
+      mapleScouterTimeout.current = null;
+      mapleScouterRequest.current = null;
+      request.resolve(payload);
     }
 
     window.addEventListener('message', receiveMapleScouterResult);
     return () => {
       window.removeEventListener('message', receiveMapleScouterResult);
     };
-  }, [accessToken]);
+  }, []);
 
   const reportError = (error) => {
     setNotice({ type: 'error', text: error.message || '요청에 실패했습니다.' });
@@ -475,9 +429,29 @@ function App() {
     }
   }
 
+  function waitForMapleScouterResult(popup, character, groupId) {
+    return new Promise((resolve, reject) => {
+      const request = { nickname: character.nickname, ocid: character.ocid, groupId, resolve };
+      mapleScouterRequest.current = request;
+      mapleScouterTimeout.current = window.setTimeout(() => {
+        if (mapleScouterRequest.current !== request) return;
+        mapleScouterRequest.current = null;
+        mapleScouterTimeout.current = null;
+        reject(new Error('MapleScouter 결과 응답 시간이 초과됐습니다.'));
+      }, 65_000);
+
+      const resultUrl = new URL('/ko/result', mapleScouterOrigin);
+      resultUrl.searchParams.set('name', character.nickname);
+      popup.location.href = resultUrl.toString();
+    });
+  }
+
   async function refreshMapleScouterData() {
-    const character = characters.find(({ ocid }) => ocid === selectedCharacterId);
-    if (!character) return;
+    const refreshCharacters = activeCharacters.slice();
+    if (!refreshCharacters.length) {
+      setNotice({ type: 'error', text: '계정 설정에서 먼저 실사용 캐릭터를 선택해 주세요.' });
+      return;
+    }
     const popup = window.open('about:blank', '_blank');
     if (!popup) {
       setNotice({ type: 'error', text: 'MapleScouter 팝업이 차단됐습니다. 팝업을 허용해 주세요.' });
@@ -502,22 +476,71 @@ function App() {
 
     const groupId = view === 'group' ? selectedGroupId : null;
     mapleScouterPopup.current = popup;
-    mapleScouterRequest.current = { nickname: character.nickname, ocid: character.ocid, groupId };
     setBusy('maplescouter-refresh');
-    const resultUrl = new URL('/ko/result', mapleScouterOrigin);
-    resultUrl.searchParams.set('name', character.nickname);
-    mapleScouterTimeout.current = window.setTimeout(() => {
-      if (mapleScouterPopup.current !== popup) return;
-      mapleScouterPopup.current = null;
+    const failures = [];
+    let successfulCharacters = 0;
+    let updatedMultipliers = 0;
+    let ignoredMultipliers = 0;
+    try {
+      for (const [index, character] of refreshCharacters.entries()) {
+        setMapleScouterProgress({ current: index + 1, total: refreshCharacters.length, nickname: character.nickname });
+        try {
+          const payload = await waitForMapleScouterResult(popup, character, groupId);
+          if (payload.error) throw new Error(payload.error);
+          if (typeof payload.nickname !== 'string'
+            || payload.nickname.toLocaleLowerCase('ko') !== character.nickname.toLocaleLowerCase('ko')
+            || !Number.isSafeInteger(payload.boss380HexaScore)
+            || !Array.isArray(payload.multipliers)) {
+            throw new Error('확장에서 받은 결과를 확인할 수 없습니다.');
+          }
+          if (groupId && !payload.multipliers.length) {
+            throw new Error('보스 배율을 찾지 못했습니다.');
+          }
+
+          const result = await workerRequest(accessToken, '/api/characters/maplescouter-import', {
+            method: 'POST',
+            body: JSON.stringify({
+              nickname: character.nickname,
+              boss380HexaScore: payload.boss380HexaScore,
+              multipliers: groupId ? payload.multipliers : [],
+              groupId,
+            }),
+          });
+          setCharacters((current) => current.map((savedCharacter) => (
+            savedCharacter.ocid === character.ocid
+              ? { ...savedCharacter, boss380HexaScore: result.boss380HexaScore }
+              : savedCharacter
+          )));
+          successfulCharacters += 1;
+          updatedMultipliers += result.updatedMultipliers || 0;
+          ignoredMultipliers += result.ignoredMultipliers || 0;
+        } catch (error) {
+          failures.push(`${character.nickname}: ${error.message || '갱신 실패'}`);
+        }
+      }
+
+      if (groupId) {
+        try {
+          await loadGroupData(accessToken, groupId);
+        } catch (error) {
+          failures.push(`그룹 배율 새로고침: ${error.message || '실패'}`);
+        }
+      }
+    } finally {
+      if (mapleScouterTimeout.current) window.clearTimeout(mapleScouterTimeout.current);
+      mapleScouterTimeout.current = null;
       mapleScouterRequest.current = null;
+      mapleScouterPopup.current = null;
+      if (!popup.closed) popup.close();
+      setMapleScouterProgress(null);
       setBusy('');
-      setShowExtensionInstallHelp(true);
-      setNotice({
-        type: 'error',
-        text: '결과를 받지 못했습니다. MemoFam MapleScouter Reader 브라우저 확장을 설치했는지 확인해 주세요.',
-      });
-    }, 65_000);
-    popup.location.href = resultUrl.toString();
+    }
+
+    const summary = `실사용 캐릭터 ${successfulCharacters}/${refreshCharacters.length}명 동기화 완료${groupId ? `, ${updatedMultipliers}개 배율 저장` : ''}.${ignoredMultipliers ? ` 그룹에 없는 ${ignoredMultipliers}개 보스는 제외했습니다.` : ''}`;
+    setNotice({
+      type: failures.length ? 'error' : 'success',
+      text: `${summary}${failures.length ? ` 실패: ${failures.join(' · ')}` : ''}`,
+    });
   }
 
   async function createBoss(event) {
@@ -576,6 +599,11 @@ function App() {
     : view === 'bosses'
       ? '보스 설정'
       : selectedGroup?.name || '그룹';
+  const mapleScouterButtonLabel = busy === 'maplescouter-check'
+    ? '확장 확인 중...'
+    : busy === 'maplescouter-refresh'
+      ? `갱신 중 ${mapleScouterProgress?.current || 0}/${mapleScouterProgress?.total || activeCharacters.length} · ${mapleScouterProgress?.nickname || ''}`
+      : `실사용 ${activeCharacters.length}명 전체 갱신`;
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
 
   return (
@@ -610,18 +638,6 @@ function App() {
         </div>
         {account && (
           <button
-            className={`rail-button account-settings-button ${view === 'settings' ? 'active' : ''}`}
-            type="button"
-            title="계정 설정"
-            aria-label="계정 설정"
-            onClick={() => setView('settings')}
-          >
-            <span className="rail-avatar">⚙</span>
-            <span className="rail-tooltip">계정 설정</span>
-          </button>
-        )}
-        {account && (
-          <button
             className="rail-button add-group-button"
             type="button"
             title="그룹 만들기"
@@ -639,9 +655,15 @@ function App() {
         )}
         <div className="rail-spacer" />
         {account ? (
-          <button className="rail-button logout-button" type="button" title="로그아웃" onClick={logOut}>
-            <span className="rail-avatar">↪</span>
-            <span className="rail-tooltip">로그아웃</span>
+          <button
+            className={`rail-button account-settings-button ${view === 'settings' ? 'active' : ''}`}
+            type="button"
+            title="계정 설정"
+            aria-label="계정 설정"
+            onClick={() => setView('settings')}
+          >
+            <span className="rail-avatar">⚙</span>
+            <span className="rail-tooltip">계정 설정</span>
           </button>
         ) : (
           <span className="rail-brand" aria-label="Maple Scout">M</span>
@@ -665,10 +687,7 @@ function App() {
               {theme === 'dark' ? '☀' : '☾'}
             </button>
             {account ? (
-              <>
-                <span className="account-email">{account.email}</span>
-                <button className="quiet-button" type="button" onClick={logOut}>로그아웃</button>
-              </>
+              <span className="account-email">{account.email}</span>
             ) : (
               <button className="google-button" type="button" onClick={() => signIn()} disabled={busy === 'signin'}>
                 <span className="google-g">G</span>{busy === 'signin' ? '연결 중...' : 'Google 로그인'}
@@ -683,9 +702,9 @@ function App() {
               <p className="eyebrow">MAPLE / SCOUT WORKSPACE</p>
               <h1>{viewTitle}</h1>
             </div>
-            {account && view === 'group' && selectedGroup && selectedCharacter && (
-              <button className="primary-button" type="button" onClick={refreshMapleScouterData} disabled={busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}>
-                {busy === 'maplescouter-check' ? '확장 확인 중...' : busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : `${selectedCharacter.nickname} 자동 갱신`}
+            {account && view === 'group' && selectedGroup && (
+              <button className="primary-button" type="button" onClick={refreshMapleScouterData} disabled={!activeCharacters.length || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}>
+                {mapleScouterButtonLabel}
               </button>
             )}
           </div>
@@ -697,10 +716,15 @@ function App() {
                 <h2 id="extension-install-title">MemoFam Reader 설치</h2>
                 <button className="quiet-button" type="button" aria-label="설치 안내 닫기" onClick={() => setShowExtensionInstallHelp(false)}>×</button>
               </div>
+              <p>Chrome Web Store 등록 없이 ZIP 파일로 설치할 수 있습니다.</p>
+              <a className="outline-button extension-download" href="/memofam-maplescouter-reader.zip" download>
+                MemoFam Reader 다운로드
+              </a>
               <ol>
+                <li>ZIP을 다운로드해 압축을 풉니다.</li>
                 <li>Chrome에서 <code>chrome://extensions</code>, Edge에서 <code>edge://extensions</code>를 엽니다.</li>
-                <li>개발자 모드를 켜고 <strong>압축해제된 확장 프로그램을 로드</strong>를 누릅니다.</li>
-                <li>저장소의 <code>browser-extension/</code> 폴더를 선택한 뒤 이 앱 페이지를 새로고침합니다. 사용자 지정 도메인이라면 manifest.json에 도메인을 추가하세요.</li>
+                <li>개발자 모드를 켜고 <strong>압축해제된 확장 프로그램을 로드</strong>를 눌러 압축을 푼 폴더를 선택합니다.</li>
+                <li>이 앱 페이지를 새로고침합니다. 사용자 지정 도메인이라면 확장 manifest에 도메인을 추가해야 합니다.</li>
               </ol>
             </section>
           )}
@@ -815,6 +839,14 @@ function App() {
                       </div>
                     )}
                   </section>
+                  <section className="account-danger-zone" aria-labelledby="account-logout-title">
+                    <div>
+                      <p className="eyebrow">ACCOUNT</p>
+                      <h2 id="account-logout-title">로그아웃</h2>
+                      <p>이 브라우저에서 MemoFam 계정 연결을 종료합니다.</p>
+                    </div>
+                    <button className="logout-danger-button" type="button" onClick={logOut}>로그아웃</button>
+                  </section>
                 </>
               )}
 
@@ -832,9 +864,9 @@ function App() {
                           className="outline-button character-score-refresh"
                           type="button"
                           onClick={refreshMapleScouterData}
-                          disabled={!selectedCharacter || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}
+                          disabled={!activeCharacters.length || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}
                         >
-                          {busy === 'maplescouter-check' ? '확장 확인 중...' : busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : 'MapleScouter 자동 갱신'}
+                          {mapleScouterButtonLabel}
                         </button>
                       </div>
                     </div>

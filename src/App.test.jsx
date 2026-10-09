@@ -114,6 +114,9 @@ test('remembers the Nexon API key in a cookie only when requested', async () => 
   fireEvent.click(screen.getByRole('button', { name: '계정 설정' }));
   expect(screen.getByLabelText('Nexon Open API 키').value).toBe('test-nexon-key');
   expect(screen.getByRole('checkbox', { name: 'API 키 유지' }).checked).toBe(true);
+  const logoutButton = screen.getByRole('button', { name: '로그아웃' });
+  expect(logoutButton.closest('.account-danger-zone')).toBeDefined();
+  expect(document.querySelector('.logout-button')).toBeNull();
   fireEvent.click(screen.getByRole('checkbox', { name: 'API 키 유지' }));
   expect(document.cookie).not.toContain('maple-scout-nexon-api-key=');
 });
@@ -272,33 +275,50 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByTitle('Test group'));
   expect(await screen.findByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeDefined();
   expect(screen.getByText('일일 퀘스트')).toBeDefined();
-  fireEvent.click(await screen.findByRole('button', { name: '아잉느 자동 갱신' }));
+  fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));
   expect(window.open).toHaveBeenNthCalledWith(1, 'about:blank', '_blank');
   await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
   expect(screen.getByRole('alert').textContent).toContain('MemoFam Reader 설치');
   expect(screen.getByText(/압축해제된 확장 프로그램을 로드/)).toBeDefined();
+  const extensionDownload = screen.getByRole('link', { name: 'MemoFam Reader 다운로드' });
+  expect(extensionDownload.getAttribute('href')).toBe('/memofam-maplescouter-reader.zip');
+  expect(extensionDownload.hasAttribute('download')).toBe(true);
   expect(mapleScouterPopup.close).toHaveBeenCalledOnce();
 
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: '아잉느 자동 갱신' }));
+    fireEvent.click(screen.getByRole('button', { name: '실사용 2명 전체 갱신' }));
     await Promise.resolve();
   });
   expect(window.open).toHaveBeenNthCalledWith(2, 'about:blank', '_blank');
   await waitFor(() => expect(mapleScouterPopup.location.href)
-    .toBe('https://maplescouter.com/ko/result?name=%EC%95%84%EC%9E%89%EB%8A%90'));
+    .toBe('https://maplescouter.com/ko/result?name=%EC%98%A4%EC%9E%89%EB%8A%90'));
   window.dispatchEvent(new MessageEvent('message', {
     origin: 'https://maplescouter.com',
     source: {},
     data: {
       type: 'maple-scout/maplescouter-import',
       payload: {
-        nickname: '아잉느',
-        boss380HexaScore: 70000,
-        multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
+        nickname: '오잉느',
+        boss380HexaScore: 67619,
+        multipliers: [{ bossId: 'normal_kaling', multiplier: 26.5 }],
       },
     },
   }));
   expect(workerCalls.some(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import')).toBe(false);
+  window.dispatchEvent(new MessageEvent('message', {
+    origin: 'https://maplescouter.com',
+    source: mapleScouterPopup,
+    data: {
+      type: 'maple-scout/maplescouter-import',
+      payload: {
+        nickname: '오잉느',
+        boss380HexaScore: 67619,
+        multipliers: [{ bossId: 'normal_kaling', multiplier: 26.5 }],
+      },
+    },
+  }));
+  await waitFor(() => expect(mapleScouterPopup.location.href)
+    .toBe('https://maplescouter.com/ko/result?name=%EC%95%84%EC%9E%89%EB%8A%90'));
   window.dispatchEvent(new MessageEvent('message', {
     origin: 'https://maplescouter.com',
     source: mapleScouterPopup,
@@ -311,16 +331,15 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       },
     },
   }));
-  await screen.findByText('보스380 헥사 점수와 1개 보스 배율을 저장했습니다.');
+  await screen.findByText(/실사용 캐릭터 2\/2명 동기화 완료/);
   expect(screen.queryByLabelText('북마클릿 주소')).toBeNull();
+  expect(mapleScouterPopup.close).toHaveBeenCalledTimes(2);
 
-  const importCall = workerCalls.find(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import');
-  expect(importCall.request).toEqual({
-    nickname: '아잉느',
-    boss380HexaScore: 70000,
-    multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
-    groupId: 'group-1',
-  });
-  expect(new Headers(importCall.init.headers).get('Authorization')).toBe('Bearer test-access-token');
+  const importCalls = workerCalls.filter(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import');
+  expect(importCalls.map(({ request }) => request)).toEqual([
+    { nickname: '오잉느', boss380HexaScore: 67619, multipliers: [{ bossId: 'normal_kaling', multiplier: 26.5 }], groupId: 'group-1' },
+    { nickname: '아잉느', boss380HexaScore: 70000, multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }], groupId: 'group-1' },
+  ]);
+  expect(new Headers(importCalls[0].init.headers).get('Authorization')).toBe('Bearer test-access-token');
   expect(workerCalls.some(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-scores')).toBe(false);
 });

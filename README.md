@@ -10,7 +10,7 @@ MemoFam 프런트엔드와 Maple Scout Cloudflare Worker를 한 저장소에서 
 
 ## 캐릭터 설정
 
-앱의 **계정 설정**에서 Nexon API 키를 입력하고 260레벨 이상 캐릭터를 불러온 뒤, 실제 사용할 캐릭터만 체크합니다. 새로 불러온 캐릭터는 자동 선택되지 않습니다. 메인 화면과 그룹 일정에는 체크된 캐릭터만 나타나며, 갱신 버튼도 선택된 캐릭터만 대상으로 합니다. 선택 목록은 Google 계정별로 현재 브라우저에 저장되며 다른 기기와 동기화되지 않습니다.
+앱의 **계정 설정**에서 Nexon API 키를 입력하고 260레벨 이상 캐릭터를 불러온 뒤, 실제 사용할 캐릭터만 체크합니다. 새로 불러온 캐릭터는 자동 선택되지 않습니다. 메인 화면과 그룹 일정에는 체크된 캐릭터만 나타나며, 갱신 버튼은 체크된 캐릭터 전원을 차례로 동기화한 뒤 MapleScouter 탭을 닫습니다. 선택 목록은 Google 계정별로 현재 브라우저에 저장되며 다른 기기와 동기화되지 않습니다.
 
 ## 로컬 실행
 
@@ -22,9 +22,15 @@ cp .env.example .env
 npm start
 ```
 
-MapleScouter 결과는 사용자 브라우저에서 확장이 읽습니다. 갱신 버튼을 누르면 확장 설치 여부를 먼저 확인하며, 감지되지 않으면 앱에 설치 단계를 표시합니다. Chrome/Edge에서 `chrome://extensions` 또는 `edge://extensions`를 열고 개발자 모드를 켠 다음 **압축해제된 확장 프로그램을 로드**에서 저장소의 `browser-extension/` 폴더를 선택하고 앱 페이지를 새로고침하세요. 설치된 확장은 결과 탭을 자동으로 읽어 Worker에 저장합니다. Vite 서버, Playwright, 북마클릿은 사용하지 않습니다.
+MapleScouter 결과는 사용자 브라우저에서 확장이 읽습니다. 갱신 버튼을 누르면 확장 설치 여부를 먼저 확인하며, 감지되지 않으면 앱에 ZIP 다운로드와 설치 단계를 표시합니다. ZIP을 내려받아 압축을 푼 뒤 Chrome/Edge의 `chrome://extensions` 또는 `edge://extensions`에서 개발자 모드를 켜고 **압축해제된 확장 프로그램을 로드**를 선택하세요. 설치된 확장은 결과 탭을 자동으로 읽어 Worker에 저장합니다. Vite 서버, Playwright, 북마클릿은 사용하지 않습니다.
 
 앱을 Codespaces나 Vercel에서 제공해도 확장이 설치된 사용자 브라우저에서 MapleScouter 페이지를 읽습니다. Worker의 `APP_ORIGINS`에는 앱의 실제 Origin을 등록해야 합니다. 확장은 MapleScouter의 차단을 우회하지 않으며, 사이트가 사용자 브라우저 접속도 차단하면 수집할 수 없습니다.
+
+확장 ZIP 재생성:
+
+```sh
+zip -j -X -FS public/memofam-maplescouter-reader.zip browser-extension/manifest.json browser-extension/app-bridge.js browser-extension/content.js
+```
 
 Worker 의존성은 별도로 설치하고 다른 터미널에서 실행합니다.
 

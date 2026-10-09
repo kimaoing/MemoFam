@@ -4,8 +4,9 @@ This Chrome/Edge Manifest V3 extension reads the result page that MemoFam opens 
 
 ## Install
 
-1. Open `chrome://extensions` (or `edge://extensions`) and enable Developer mode.
-2. Select **Load unpacked** and choose this `browser-extension` folder.
-3. Keep the extension enabled, sign in to MemoFam, and use the MapleScouter refresh button. The result page opens and is read automatically.
+1. Download the ZIP from MemoFam and extract it.
+2. Open `chrome://extensions` (or `edge://extensions`) and enable Developer mode.
+3. Select **Load unpacked** and choose the extracted folder containing `manifest.json`.
+4. Keep the extension enabled, sign in to MemoFam, and use the MapleScouter refresh button. The result page opens and is read automatically.
 
 The app must be opened in the same browser profile where this extension is installed. The app bridge supports `localhost`, `*.app.github.dev`, and `*.vercel.app`; add your custom app domain to the app bridge match list in `manifest.json` before reloading the unpacked extension. If the app does not detect the extension, reload the app tab after installing it and confirm the app domain is listed in the manifest. The extension sends only the extracted result to the app tab that opened MapleScouter.

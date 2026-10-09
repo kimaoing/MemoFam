@@ -28,7 +28,6 @@ a { color: inherit; }
 .add-group-button .rail-avatar { color: #75d6a2; font-size: 26px; }
 .add-group-button:hover .rail-avatar { background: #358d64; color: #fff; }
 .rail-spacer { flex: 1; }
-.logout-button .rail-avatar { font-size: 22px; }
 .rail-brand { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 15px; background: #6579d6; color: #fff; font-size: 19px; font-weight: 800; }
 .rail-tooltip { position: absolute; z-index: 5; top: 50%; left: 60px; visibility: hidden; padding: 8px 11px; border-radius: 5px; background: #171922; color: #fff; font-size: 12px; opacity: 0; pointer-events: none; transform: translateY(-50%) translateX(-4px); transition: .15s ease; white-space: nowrap; }
 .rail-button:hover .rail-tooltip { visibility: visible; opacity: 1; transform: translateY(-50%); }
@@ -60,6 +59,8 @@ button:disabled { cursor: wait; opacity: .65; }
 .extension-install-help { margin: -8px 0 22px; padding: 15px 18px; border: 1px solid #edc7c9; border-radius: 7px; background: #fff7f7; color: #49383a; font-size: 12px; line-height: 1.65; }
 .extension-install-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .extension-install-heading h2 { margin: 0; font-size: 14px; }
+.extension-install-help > p { margin: 7px 0 10px; }
+.extension-download { min-height: 34px; padding: 0 11px; font-size: 11px; text-decoration: none; }
 .extension-install-help ol { display: grid; gap: 4px; margin: 8px 0 0; padding-left: 20px; }
 .extension-install-help code { padding: 1px 4px; border-radius: 3px; background: rgba(130, 70, 70, .08); font-size: 11px; }
 
@@ -96,14 +97,19 @@ button:disabled { cursor: wait; opacity: .65; }
 .character-tools { display: flex; align-items: center; gap: 10px; }
 .character-score-refresh { min-height: 32px; padding: 0 10px; font-size: 11px; }
 .character-settings-section { margin-top: 32px; }
-.active-character-list { display: grid; border-top: 1px solid #e4e6ed; }
-.active-character-option { display: grid; grid-template-columns: 16px 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 66px; padding: 9px 10px; border-bottom: 1px solid #e4e6ed; cursor: pointer; }
-.active-character-option > input { width: 16px; height: 16px; margin: 0; accent-color: #596fd1; }
-.active-character-avatar { display: grid; width: 40px; height: 40px; place-items: center; overflow: hidden; border-radius: 9px; background: #f0f2ff; color: #6879c9; font-size: 18px; font-weight: 700; }
+.active-character-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.active-character-option { position: relative; display: grid; grid-template-rows: 100px auto auto; align-content: start; justify-items: center; gap: 9px; min-width: 0; min-height: 188px; padding: 18px 10px 12px; border: 1px solid #e0e3ea; border-radius: 8px; background: #fff; text-align: center; cursor: pointer; }
+.active-character-option > input { position: absolute; top: 11px; left: 11px; width: 17px; height: 17px; margin: 0; accent-color: #596fd1; }
+.active-character-avatar { display: grid; width: 96px; height: 96px; place-items: center; overflow: hidden; border-radius: 12px; background: #f0f2ff; color: #6879c9; font-size: 28px; font-weight: 700; }
 .active-character-avatar img { width: 100%; height: 100%; object-fit: contain; }
-.active-character-details { display: grid; min-width: 0; gap: 3px; }
-.active-character-details strong { overflow: hidden; color: #2b303d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.active-character-details { display: grid; width: 100%; min-width: 0; gap: 4px; }
+.active-character-details strong { overflow: hidden; color: #2b303d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .active-character-details small, .active-character-score { color: #858b98; font-size: 10px; }
+.account-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 34px; padding: 20px 0; border-top: 1px solid #e3e5eb; }
+.account-danger-zone h2 { margin: 4px 0; color: #343846; font-size: 15px; }
+.account-danger-zone p:last-child { margin: 0; color: #858b98; font-size: 11px; }
+.logout-danger-button { min-height: 40px; padding: 0 16px; border: 1px solid #c93e48; border-radius: 4px; background: #c93e48; color: #fff; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.logout-danger-button:hover { border-color: #ab2e38; background: #ab2e38; }
 .world-character-group + .world-character-group { margin-top: 22px; }
 .world-character-heading { margin: 0 0 10px; color: #4b5161; font-size: 14px; font-weight: 700; }
 .character-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 10px; }
@@ -199,9 +205,13 @@ button:disabled { cursor: wait; opacity: .65; }
   .page-heading .primary-button { max-width: 155px; padding: 0 9px; font-size: 10px; }
   .character-settings-section .section-heading { align-items: flex-start; flex-direction: column; }
   .character-settings-section .character-tools { width: 100%; justify-content: flex-start; }
-  .active-character-option { grid-template-columns: 16px 36px minmax(0, 1fr); column-gap: 9px; }
-  .active-character-avatar { width: 36px; height: 36px; }
-  .active-character-score { grid-column: 3; margin-top: -8px; }
+  .active-character-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+  .active-character-option { grid-template-rows: 68px auto auto; gap: 6px; min-height: 135px; padding: 15px 5px 9px; }
+  .active-character-option > input { top: 7px; left: 7px; width: 15px; height: 15px; }
+  .active-character-avatar { width: 66px; height: 66px; border-radius: 10px; }
+  .active-character-details strong { font-size: 11px; }
+  .active-character-details small, .active-character-score { font-size: 9px; }
+  .account-danger-zone { align-items: flex-start; }
   .sync-card { padding: 17px 14px; }
   .sync-form { grid-template-columns: 1fr; }
   .sync-footer { align-items: flex-start; flex-direction: column; gap: 7px; }
@@ -308,6 +318,9 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .active-character-option { border-color: #343847; }
 .app-shell[data-theme='dark'] .active-character-details strong { color: #e4e6ef; }
 .app-shell[data-theme='dark'] .active-character-avatar { background: #282c3b; }
+.app-shell[data-theme='dark'] .active-character-option { border-color: #343847; background: #20232e; }
+.app-shell[data-theme='dark'] .account-danger-zone { border-color: #343847; }
+.app-shell[data-theme='dark'] .account-danger-zone h2 { color: #e6e8ef; }
 .app-shell[data-theme='dark'] .extension-install-help { border-color: #69464a; background: #302428; color: #f0dfe1; }
 .app-shell[data-theme='dark'] .extension-install-help code { background: rgba(255, 255, 255, .08); }
 

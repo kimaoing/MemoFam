@@ -38,13 +38,6 @@ const bossFamilyTopPrice = bossRecommendationSettings.bosses.reduce((prices, bos
   return prices;
 }, {});
 
-const bossImageAliases = {
-  dusk: ['gloom'],
-  dunkel: ['darknell'],
-  guardianangelslime: ['slime'],
-  jinhilla: ['verushilla'],
-};
-
 function bossFamilyOrder(familyId) {
   const index = bossRecommendationSettings.highDifficultyOverrides.indexOf(familyId);
   return index === -1 ? bossRecommendationSettings.highDifficultyOverrides.length : index;
@@ -66,13 +59,7 @@ function bossImageFor(bossId) {
     .find((entry) => findImagePath(entry.bossId.toLocaleLowerCase('en-US')));
   const familyImagePath = familyImageBoss && findImagePath(familyImageBoss.bossId.toLocaleLowerCase('en-US'));
   if (familyImagePath) return bossImages[familyImagePath];
-  const aliases = bossImageAliases[boss?.familyId] || [];
-  const aliasPaths = Object.keys(bossImages).filter((path) => aliases.some((alias) => (
-    path.split('/').at(-1).replace(/\.png$/i, '').toLocaleLowerCase('en-US').endsWith(`_${alias}`)
-  )));
-  const aliasPath = aliasPaths.find((path) => path.split('/').at(-1).toLocaleLowerCase('en-US')
-    .startsWith(`${boss.difficulty}_`)) || aliasPaths[0];
-  return aliasPath ? bossImages[aliasPath] : null;
+  return null;
 }
 
 function getGoogleAuthorizationCode() {

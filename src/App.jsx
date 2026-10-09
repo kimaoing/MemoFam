@@ -1652,13 +1652,13 @@ function App() {
               {isAssigned && (
                 <em className="group-character-quick-assignment-note">
                   {character.assignedParty.groupId === selectedGroupId
-                    ? '이미 그룹에 편성되어있습니다.'
-                    : '이미 다른 그룹에 편성되어있습니다.'}
+                    ? '이미 편성됨'
+                    : '이미 편성됨'}
                 </em>
               )}
               {sameAccountCharacterAssigned && (
                 <em className="group-character-quick-assignment-note">
-                  같은 계정의 캐릭터가 편성되어있습니다.
+                  이미 편성됨
                 </em>
               )}
             </article>

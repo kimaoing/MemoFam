@@ -1,0 +1,11 @@
+# MemoFam MapleScouter Reader
+
+This Chrome/Edge Manifest V3 extension reads the result page that MemoFam opens and sends the boss380 Hexa score and boss multipliers back to that app tab. It has access only to `https://maplescouter.com/ko/result*` and does not read or store login tokens.
+
+## Install
+
+1. Open `chrome://extensions` (or `edge://extensions`) and enable Developer mode.
+2. Select **Load unpacked** and choose this `browser-extension` folder.
+3. Keep the extension enabled, sign in to MemoFam, and use the MapleScouter refresh button. The result page opens and is read automatically.
+
+The app must be opened in the same browser profile where this extension is installed. The app bridge supports `localhost`, `*.app.github.dev`, and `*.vercel.app`; add your custom app domain to the app bridge match list in `manifest.json` before reloading the unpacked extension. If the app does not detect the extension, reload the app tab after installing it and confirm the app domain is listed in the manifest. The extension sends only the extracted result to the app tab that opened MapleScouter.

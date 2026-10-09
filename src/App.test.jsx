@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
 beforeEach(() => {
@@ -100,6 +100,7 @@ test('remembers the Nexon API key in a cookie only when requested', async () => 
   const firstPage = render(<App />);
   fireEvent.click(screen.getByRole('button', { name: /Google 계정으로 계속/i }));
   await screen.findByText('member@example.test');
+  fireEvent.click(screen.getByRole('button', { name: '계정 설정' }));
 
   const apiKeyInput = screen.getByLabelText('Nexon Open API 키');
   fireEvent.change(apiKeyInput, { target: { value: 'test-nexon-key' } });
@@ -110,6 +111,7 @@ test('remembers the Nexon API key in a cookie only when requested', async () => 
   render(<App />);
   fireEvent.click(screen.getByRole('button', { name: /Google 계정으로 계속/i }));
   await screen.findByText('member@example.test');
+  fireEvent.click(screen.getByRole('button', { name: '계정 설정' }));
   expect(screen.getByLabelText('Nexon Open API 키').value).toBe('test-nexon-key');
   expect(screen.getByRole('checkbox', { name: 'API 키 유지' }).checked).toBe(true);
   fireEvent.click(screen.getByRole('checkbox', { name: 'API 키 유지' }));
@@ -118,7 +120,24 @@ test('remembers the Nexon API key in a cookie only when requested', async () => 
 
 test('syncs all characters with one Nexon API key and refreshes a selected character', async () => {
   const workerCalls = [];
-  const localScrapeCalls = [];
+  const mapleScouterPopup = { location: { href: '' }, close: vi.fn() };
+  const extensionChecks = [];
+  vi.spyOn(window, 'open').mockReturnValue(mapleScouterPopup);
+  vi.spyOn(window, 'postMessage').mockImplementation((message) => {
+    if (message.type !== 'maple-scout/extension-check') return;
+    extensionChecks.push(message);
+    if (extensionChecks.length > 1) {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: window.location.origin,
+        source: window,
+        data: {
+          type: 'maple-scout/extension-status',
+          requestId: message.requestId,
+          installed: true,
+        },
+      }));
+    }
+  });
   const syncedCharacters = [
     {
       nickname: '오잉느',
@@ -175,14 +194,6 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     }
 
     const request = init.body ? JSON.parse(init.body) : {};
-    if (url === '/api/maplescouter/multipliers') {
-      localScrapeCalls.push({ method, request });
-      return Response.json({
-        nickname: '아잉느',
-        boss380HexaScore: 70000,
-        multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
-      });
-    }
     workerCalls.push({ path, method, init, request });
     const payload = method === 'POST' && path === '/api/characters/verify'
       ? {
@@ -229,32 +240,78 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   render(<App />);
   fireEvent.click(screen.getByRole('button', { name: /Google 계정으로 계속/i }));
   await screen.findByText('member@example.test');
+  fireEvent.click(screen.getByRole('button', { name: '계정 설정' }));
   expect(screen.queryByLabelText(/캐릭터 닉네임/)).toBeNull();
 
   fireEvent.change(screen.getByLabelText('Nexon Open API 키'), { target: { value: 'test-nexon-key' } });
-  fireEvent.click(screen.getByRole('button', { name: '전체 캐릭터 불러오기' }));
+  fireEvent.click(screen.getByRole('button', { name: '캐릭터 불러오기' }));
   expect((await screen.findByRole('status')).textContent).toContain('4개 캐릭터 정보를 동기화했습니다.');
   expect(screen.queryByText(/숨길캐릭터/)).toBeNull();
-  expect(await screen.findByRole('button', { name: /오잉느/ })).toBeDefined();
-  expect(screen.getByText('Lv. 291')).toBeDefined();
-  expect(screen.getByText('72,807')).toBeDefined();
-  expect(screen.queryByText(/미완료 \d+/)).toBeNull();
-  const worldGroups = [...document.querySelectorAll('.world-character-group')];
-  expect(worldGroups.map((group) => group.querySelector('h3').textContent)).toEqual(['스카니아', '에오스']);
-  expect([...worldGroups[0].querySelectorAll('.character-info > strong')].map((name) => name.textContent))
-    .toEqual(['아잉느', '오잉느', '세번째']);
+  expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' })).toBeDefined();
+  expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' })).toBeDefined();
+  expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 최고레벨 Lv. 285' })).toBeDefined();
+  expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 세번째 Lv. 275' })).toBeDefined();
 
   const syncCall = workerCalls.find(({ method, path }) => method === 'POST' && path === '/api/characters/verify');
   expect(syncCall.request).toEqual({ apiKey: 'test-nexon-key' });
   expect(screen.queryByDisplayValue('test-nexon-key')).toBeNull();
+
+  fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' }));
+  expect(window.localStorage.getItem('maple-scout-active-characters:member@example.test'))
+    .toBe(JSON.stringify(['ocid-1', 'ocid-2']));
+  fireEvent.click(screen.getByTitle('내 정보'));
+  expect(screen.getByRole('heading', { name: '실사용 캐릭터 2' })).toBeDefined();
+  expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
+  expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
+  expect(screen.queryByRole('button', { name: /최고레벨/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /세번째/ })).toBeNull();
+  expect(screen.getByText('72,807')).toBeDefined();
 
   fireEvent.click(screen.getByRole('button', { name: /아잉느/ }));
   fireEvent.click(screen.getByTitle('Test group'));
   expect(await screen.findByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeDefined();
   expect(screen.getByText('일일 퀘스트')).toBeDefined();
   fireEvent.click(await screen.findByRole('button', { name: '아잉느 자동 갱신' }));
+  expect(window.open).toHaveBeenNthCalledWith(1, 'about:blank', '_blank');
+  await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
+  expect(screen.getByRole('alert').textContent).toContain('MemoFam Reader 설치');
+  expect(screen.getByText(/압축해제된 확장 프로그램을 로드/)).toBeDefined();
+  expect(mapleScouterPopup.close).toHaveBeenCalledOnce();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: '아잉느 자동 갱신' }));
+    await Promise.resolve();
+  });
+  expect(window.open).toHaveBeenNthCalledWith(2, 'about:blank', '_blank');
+  await waitFor(() => expect(mapleScouterPopup.location.href)
+    .toBe('https://maplescouter.com/ko/result?name=%EC%95%84%EC%9E%89%EB%8A%90'));
+  window.dispatchEvent(new MessageEvent('message', {
+    origin: 'https://maplescouter.com',
+    source: {},
+    data: {
+      type: 'maple-scout/maplescouter-import',
+      payload: {
+        nickname: '아잉느',
+        boss380HexaScore: 70000,
+        multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
+      },
+    },
+  }));
+  expect(workerCalls.some(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import')).toBe(false);
+  window.dispatchEvent(new MessageEvent('message', {
+    origin: 'https://maplescouter.com',
+    source: mapleScouterPopup,
+    data: {
+      type: 'maple-scout/maplescouter-import',
+      payload: {
+        nickname: '아잉느',
+        boss380HexaScore: 70000,
+        multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
+      },
+    },
+  }));
   await screen.findByText('보스380 헥사 점수와 1개 보스 배율을 저장했습니다.');
-  expect(localScrapeCalls).toEqual([{ method: 'POST', request: { nickname: '아잉느' } }]);
   expect(screen.queryByLabelText('북마클릿 주소')).toBeNull();
 
   const importCall = workerCalls.find(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import');

@@ -20,6 +20,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest",
+    "extension:test": "node --test browser-extension/*.test.mjs",
     "worker:dev": "npm --prefix worker run dev",
     "worker:test": "npm --prefix worker test",
     "worker:typecheck": "npm --prefix worker run typecheck",
@@ -46,7 +47,6 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^26.1.0",
-    "playwright": "^1.51.1",
     "vite": "^8.0.16",
     "vitest": "^4.1.6"
   }

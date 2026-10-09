@@ -4,8 +4,13 @@ import { workerRequest } from './workerApi';
 
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const workerApiUrl = import.meta.env.VITE_WORKER_API_URL;
+const mapleScouterOrigin = 'https://maplescouter.com';
+const mapleScouterMessageType = 'maple-scout/maplescouter-import';
+const extensionCheckType = 'maple-scout/extension-check';
+const extensionStatusType = 'maple-scout/extension-status';
 const rememberLoginKey = 'maple-scout-remember-login';
 const themeKey = 'maple-scout-theme';
+const activeCharactersKeyPrefix = 'maple-scout-active-characters:';
 const nexonApiKeyCookie = 'maple-scout-nexon-api-key';
 const nexonApiKeyCookieMaxAge = 60 * 60 * 24 * 30;
 const bossImages = import.meta.glob('./bossImage/*.png', {
@@ -42,6 +47,27 @@ async function getGoogleProfile(accessToken) {
   return response.json();
 }
 
+function checkMapleScouterExtension() {
+  return new Promise((resolve) => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let timeoutId;
+    const finish = (installed) => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', receiveStatus);
+      resolve(installed);
+    };
+    const receiveStatus = (event) => {
+      if (event.source !== window || event.origin !== window.location.origin) return;
+      if (event.data?.type !== extensionStatusType || event.data.requestId !== requestId) return;
+      finish(event.data.installed === true);
+    };
+
+    window.addEventListener('message', receiveStatus);
+    timeoutId = window.setTimeout(() => finish(false), 600);
+    window.postMessage({ type: extensionCheckType, requestId }, window.location.origin);
+  });
+}
+
 function isIncomplete(item, boss = false) {
   if (boss) return item.complete_flag !== 'true' && item.complete_flag !== true;
   if (item.type === 'quest') return item.quest_state !== '2';
@@ -72,6 +98,21 @@ function saveNexonApiKeyCookie(apiKey) {
 
 function clearNexonApiKeyCookie() {
   document.cookie = `${nexonApiKeyCookie}=; Max-Age=0; Path=/; SameSite=Strict`;
+}
+
+function activeCharactersStorageKey(email) {
+  return `${activeCharactersKeyPrefix}${email.trim().toLowerCase()}`;
+}
+
+function readActiveCharacterIds(email, characters) {
+  try {
+    const savedIds = JSON.parse(window.localStorage.getItem(activeCharactersStorageKey(email)) || '[]');
+    if (!Array.isArray(savedIds)) return [];
+    const availableIds = new Set(characters.map(({ ocid }) => ocid));
+    return [...new Set(savedIds.filter((ocid) => typeof ocid === 'string' && availableIds.has(ocid)))];
+  } catch {
+    return [];
+  }
 }
 
 function groupCharactersByWorld(characters) {
@@ -116,6 +157,7 @@ function App() {
   const [accessToken, setAccessToken] = useState('');
   const [account, setAccount] = useState(null);
   const [characters, setCharacters] = useState([]);
+  const [activeCharacterIds, setActiveCharacterIds] = useState([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
   const [groups, setGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
@@ -127,14 +169,17 @@ function App() {
   const [memberEmail, setMemberEmail] = useState('');
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState(null);
+  const [showExtensionInstallHelp, setShowExtensionInstallHelp] = useState(false);
   const [view, setView] = useState('characters');
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [rememberLogin, setRememberLogin] = useState(() => readPreference(rememberLoginKey, 'false') === 'true');
   const [rememberApiKey, setRememberApiKey] = useState(() => Boolean(readNexonApiKeyCookie()));
   const [theme, setTheme] = useState(() => readPreference(themeKey, 'dark'));
-  const characterWorldGroups = groupCharactersByWorld(characters);
   const restoreLoginOnMount = useRef(rememberLogin);
   const loginRestoreAttempted = useRef(false);
+  const mapleScouterPopup = useRef(null);
+  const mapleScouterRequest = useRef(null);
+  const mapleScouterTimeout = useRef(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -148,6 +193,72 @@ function App() {
       // Keep the selected theme for this page even if browser storage is unavailable.
     }
   }, [theme]);
+
+  useEffect(() => {
+    function clearPendingRequest() {
+      if (mapleScouterTimeout.current) window.clearTimeout(mapleScouterTimeout.current);
+      mapleScouterTimeout.current = null;
+      mapleScouterPopup.current = null;
+      mapleScouterRequest.current = null;
+    }
+
+    async function saveMapleScouterResult(payload, request) {
+      try {
+        if (payload.error) throw new Error(payload.error);
+        if (typeof payload.nickname !== 'string'
+          || payload.nickname.toLocaleLowerCase('ko') !== request.nickname.toLocaleLowerCase('ko')
+          || !Number.isSafeInteger(payload.boss380HexaScore)
+          || !Array.isArray(payload.multipliers)) {
+          throw new Error('MapleScouter 확장에서 받은 결과를 확인할 수 없습니다.');
+        }
+        if (request.groupId && !payload.multipliers.length) {
+          throw new Error('MapleScouter에서 보스 배율을 찾지 못했습니다. 결과가 모두 표시된 뒤 다시 시도해 주세요.');
+        }
+
+        const result = await workerRequest(accessToken, '/api/characters/maplescouter-import', {
+          method: 'POST',
+          body: JSON.stringify({
+            nickname: request.nickname,
+            boss380HexaScore: payload.boss380HexaScore,
+            multipliers: request.groupId ? payload.multipliers : [],
+            groupId: request.groupId,
+          }),
+        });
+        setCharacters((current) => current.map((character) => (
+          character.ocid === request.ocid
+            ? { ...character, boss380HexaScore: result.boss380HexaScore }
+            : character
+        )));
+        if (request.groupId) await loadGroupData(accessToken, request.groupId);
+        setNotice({
+          type: 'success',
+          text: `${request.groupId
+            ? `보스380 헥사 점수와 ${result.updatedMultipliers}개 보스 배율을 저장했습니다.`
+            : '보스380 헥사 점수를 저장했습니다.'}${result.ignoredMultipliers ? ` 그룹에 없는 ${result.ignoredMultipliers}개 보스는 제외했습니다.` : ''}`,
+        });
+          setShowExtensionInstallHelp(false);
+      } catch (error) {
+        reportError(error);
+      } finally {
+        setBusy('');
+      }
+    }
+
+    function receiveMapleScouterResult(event) {
+      if (event.origin !== mapleScouterOrigin || event.source !== mapleScouterPopup.current) return;
+      const request = mapleScouterRequest.current;
+      const payload = event.data?.type === mapleScouterMessageType ? event.data.payload : null;
+      if (!request || !payload) return;
+
+      clearPendingRequest();
+      void saveMapleScouterResult(payload, request);
+    }
+
+    window.addEventListener('message', receiveMapleScouterResult);
+    return () => {
+      window.removeEventListener('message', receiveMapleScouterResult);
+    };
+  }, [accessToken]);
 
   const reportError = (error) => {
     setNotice({ type: 'error', text: error.message || '요청에 실패했습니다.' });
@@ -195,10 +306,12 @@ function App() {
       ]);
       const savedCharacters = characterResult.characters || [];
       const savedGroups = groupResult.groups || [];
+      const savedActiveCharacterIds = readActiveCharacterIds(profile.email, savedCharacters);
       setAccessToken(token);
       setAccount({ email: profile.email, name: profile.name });
       setCharacters(savedCharacters);
-      setSelectedCharacterId(savedCharacters[0]?.ocid || '');
+      setActiveCharacterIds(savedActiveCharacterIds);
+      setSelectedCharacterId(savedActiveCharacterIds[0] || '');
       setGroups(savedGroups);
       setSelectedGroupId(savedGroups[0]?.id || '');
       await loadGroupData(token, savedGroups[0]?.id || '');
@@ -265,6 +378,31 @@ function App() {
     }
   }
 
+  function saveActiveCharacterIds(nextIds) {
+    const uniqueIds = [...new Set(nextIds)];
+    setActiveCharacterIds(uniqueIds);
+    setSelectedCharacterId((current) => (
+      uniqueIds.includes(current) ? current : uniqueIds[0] || ''
+    ));
+    if (!account?.email) return;
+    try {
+      window.localStorage.setItem(activeCharactersStorageKey(account.email), JSON.stringify(uniqueIds));
+    } catch {
+      setNotice({ type: 'error', text: '선택한 캐릭터를 이 브라우저에 저장하지 못했습니다.' });
+    }
+  }
+
+  function toggleActiveCharacter(ocid) {
+    const nextIds = activeCharacterIds.includes(ocid)
+      ? activeCharacterIds.filter((activeOcid) => activeOcid !== ocid)
+      : [...activeCharacterIds, ocid];
+    saveActiveCharacterIds(nextIds);
+  }
+
+  function selectAllCharacters() {
+    saveActiveCharacterIds(characters.map(({ ocid }) => ocid));
+  }
+
   async function syncCharacters(event) {
     event.preventDefault();
     if (!nexonKey.trim()) return;
@@ -278,11 +416,10 @@ function App() {
       const syncedCharacters = result.characters || [];
       if (!syncedCharacters.length) throw new Error('Nexon API에서 캐릭터 목록을 찾을 수 없습니다.');
       setCharacters(syncedCharacters);
-      setSelectedCharacterId((current) => (
-        syncedCharacters.some((character) => character.ocid === current)
-          ? current
-          : syncedCharacters[0].ocid
+      const retainedActiveIds = activeCharacterIds.filter((ocid) => (
+        syncedCharacters.some((character) => character.ocid === ocid)
       ));
+      saveActiveCharacterIds(retainedActiveIds);
       if (!rememberApiKey) setNexonKey('');
       const skippedCharacters = result.skippedCharacters || [];
       const schedulerUnavailable = result.schedulerUnavailable || [];
@@ -341,55 +478,46 @@ function App() {
   async function refreshMapleScouterData() {
     const character = characters.find(({ ocid }) => ocid === selectedCharacterId);
     if (!character) return;
-    const groupId = view === 'group' ? selectedGroupId : null;
-    setBusy('maplescouter-refresh');
-    setNotice(null);
-    try {
-      const scrapeResponse = await fetch('/api/maplescouter/multipliers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname: character.nickname }),
-      });
-      const scraped = await scrapeResponse.json().catch(() => ({}));
-      if (!scrapeResponse.ok) {
-        throw new Error(scraped.error || `로컬 크롤링 요청 오류 (${scrapeResponse.status})`);
-      }
-      if (typeof scraped.nickname !== 'string'
-        || scraped.nickname.toLocaleLowerCase('ko') !== character.nickname.toLocaleLowerCase('ko')
-        || !Number.isSafeInteger(scraped.boss380HexaScore)
-        || !Array.isArray(scraped.multipliers)) {
-        throw new Error('로컬 크롤링 결과를 확인할 수 없습니다. Vite 개발 서버와 Playwright Chromium 설치를 확인해 주세요.');
-      }
-      if (groupId && !scraped.multipliers.length) {
-        throw new Error('MapleScouter에서 보스 배율을 찾지 못했습니다. 결과가 모두 표시된 뒤 다시 시도해 주세요.');
-      }
-
-      const result = await workerRequest(accessToken, '/api/characters/maplescouter-import', {
-        method: 'POST',
-        body: JSON.stringify({
-          nickname: character.nickname,
-          boss380HexaScore: scraped.boss380HexaScore,
-          multipliers: groupId ? scraped.multipliers : [],
-          groupId,
-        }),
-      });
-      setCharacters((current) => current.map((character) => (
-        character.ocid === selectedCharacter.ocid
-          ? { ...character, boss380HexaScore: result.boss380HexaScore }
-          : character
-      )));
-      if (groupId) await loadGroupData(accessToken, groupId);
-      setNotice({
-        type: 'success',
-        text: `${groupId
-          ? `보스380 헥사 점수와 ${result.updatedMultipliers}개 보스 배율을 저장했습니다.`
-          : '보스380 헥사 점수를 저장했습니다.'}${result.ignoredMultipliers ? ` 그룹에 없는 ${result.ignoredMultipliers}개 보스는 제외했습니다.` : ''}`,
-      });
-    } catch (error) {
-      reportError(error);
-    } finally {
-      setBusy('');
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) {
+      setNotice({ type: 'error', text: 'MapleScouter 팝업이 차단됐습니다. 팝업을 허용해 주세요.' });
+      return;
     }
+
+    setBusy('maplescouter-check');
+    setNotice(null);
+    setShowExtensionInstallHelp(false);
+    const extensionInstalled = await checkMapleScouterExtension();
+    if (!extensionInstalled) {
+      popup.close();
+      setBusy('');
+      setShowExtensionInstallHelp(true);
+      setNotice({ type: 'error', text: 'MemoFam Reader 확장이 없거나 현재 앱 도메인에서 활성화되지 않았습니다.' });
+      return;
+    }
+    if (popup.closed) {
+      setBusy('');
+      return;
+    }
+
+    const groupId = view === 'group' ? selectedGroupId : null;
+    mapleScouterPopup.current = popup;
+    mapleScouterRequest.current = { nickname: character.nickname, ocid: character.ocid, groupId };
+    setBusy('maplescouter-refresh');
+    const resultUrl = new URL('/ko/result', mapleScouterOrigin);
+    resultUrl.searchParams.set('name', character.nickname);
+    mapleScouterTimeout.current = window.setTimeout(() => {
+      if (mapleScouterPopup.current !== popup) return;
+      mapleScouterPopup.current = null;
+      mapleScouterRequest.current = null;
+      setBusy('');
+      setShowExtensionInstallHelp(true);
+      setNotice({
+        type: 'error',
+        text: '결과를 받지 못했습니다. MemoFam MapleScouter Reader 브라우저 확장을 설치했는지 확인해 주세요.',
+      });
+    }, 65_000);
+    popup.location.href = resultUrl.toString();
   }
 
   async function createBoss(event) {
@@ -434,12 +562,17 @@ function App() {
   }
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
-  const selectedCharacter = characters.find(({ ocid }) => ocid === selectedCharacterId);
+  const activeCharacters = characters.filter(({ ocid }) => activeCharacterIds.includes(ocid));
+  const activeCharacterWorldGroups = groupCharactersByWorld(activeCharacters);
+  const characterWorldGroups = groupCharactersByWorld(characters);
+  const selectedCharacter = activeCharacters.find(({ ocid }) => ocid === selectedCharacterId);
   const currentRows = multipliers
     .slice()
     .sort((first, second) => first.nickname.localeCompare(second.nickname) || first.bossId.localeCompare(second.bossId));
   const viewTitle = view === 'characters'
-    ? '내 정보'
+    ? '내 캐릭터'
+    : view === 'settings'
+      ? '계정 설정'
     : view === 'bosses'
       ? '보스 설정'
       : selectedGroup?.name || '그룹';
@@ -475,6 +608,18 @@ function App() {
             </button>
           ))}
         </div>
+        {account && (
+          <button
+            className={`rail-button account-settings-button ${view === 'settings' ? 'active' : ''}`}
+            type="button"
+            title="계정 설정"
+            aria-label="계정 설정"
+            onClick={() => setView('settings')}
+          >
+            <span className="rail-avatar">⚙</span>
+            <span className="rail-tooltip">계정 설정</span>
+          </button>
+        )}
         {account && (
           <button
             className="rail-button add-group-button"
@@ -539,13 +684,26 @@ function App() {
               <h1>{viewTitle}</h1>
             </div>
             {account && view === 'group' && selectedGroup && selectedCharacter && (
-              <button className="primary-button" type="button" onClick={refreshMapleScouterData} disabled={busy === 'maplescouter-refresh'}>
-                {busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : `${selectedCharacter.nickname} 자동 갱신`}
+              <button className="primary-button" type="button" onClick={refreshMapleScouterData} disabled={busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}>
+                {busy === 'maplescouter-check' ? '확장 확인 중...' : busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : `${selectedCharacter.nickname} 자동 갱신`}
               </button>
             )}
           </div>
 
           {notice && <div className={`notice ${notice.type}`} role="status">{notice.text}</div>}
+          {showExtensionInstallHelp && (
+            <section className="extension-install-help" role="alert" aria-labelledby="extension-install-title">
+              <div className="extension-install-heading">
+                <h2 id="extension-install-title">MemoFam Reader 설치</h2>
+                <button className="quiet-button" type="button" aria-label="설치 안내 닫기" onClick={() => setShowExtensionInstallHelp(false)}>×</button>
+              </div>
+              <ol>
+                <li>Chrome에서 <code>chrome://extensions</code>, Edge에서 <code>edge://extensions</code>를 엽니다.</li>
+                <li>개발자 모드를 켜고 <strong>압축해제된 확장 프로그램을 로드</strong>를 누릅니다.</li>
+                <li>저장소의 <code>browser-extension/</code> 폴더를 선택한 뒤 이 앱 페이지를 새로고침합니다. 사용자 지정 도메인이라면 manifest.json에 도메인을 추가하세요.</li>
+              </ol>
+            </section>
+          )}
 
           {!account ? (
             <section className="login-panel">
@@ -566,7 +724,7 @@ function App() {
             </section>
           ) : (
             <>
-              {view === 'characters' && (
+              {view === 'settings' && (
                 <>
                   <section className="sync-card">
                     <div className="sync-copy">
@@ -574,7 +732,7 @@ function App() {
                       <div>
                         <p className="eyebrow">NEXON OPEN API</p>
                         <h2>Nexon 계정 연결</h2>
-                        <p>API 키 하나로 계정의 모든 캐릭터, 기본 정보, 스케줄러 수행 현황을 불러옵니다.</p>
+                        <p>API 키를 입력해 260레벨 이상 캐릭터와 스케줄 정보를 불러옵니다.</p>
                       </div>
                     </div>
                     <form className="sync-form" onSubmit={syncCharacters}>
@@ -595,7 +753,7 @@ function App() {
                         </label>
                       </div>
                       <button className="primary-button" type="submit" disabled={busy === 'sync'}>
-                        {busy === 'sync' ? '캐릭터 불러오는 중...' : '전체 캐릭터 불러오기'}
+                        {busy === 'sync' ? '캐릭터 불러오는 중...' : '캐릭터 불러오기'}
                       </button>
                     </form>
                     <div className="sync-footer">
@@ -605,11 +763,68 @@ function App() {
                     </div>
                   </section>
 
+                  <section className="character-settings-section">
+                    <div className="section-heading">
+                      <div>
+                        <p className="eyebrow">ACTIVE CHARACTERS</p>
+                        <h2>사용 캐릭터 <span className="character-count">{activeCharacters.length}</span><span className="character-total">/ {characters.length}</span></h2>
+                      </div>
+                      <div className="character-tools">
+                        <span className="updated-count">선택한 캐릭터만 메인에 표시하고 갱신합니다</span>
+                        <button className="quiet-button" type="button" onClick={selectAllCharacters} disabled={!characters.length}>전체 선택</button>
+                        <button className="quiet-button" type="button" onClick={() => saveActiveCharacterIds([])} disabled={!activeCharacters.length}>전체 해제</button>
+                      </div>
+                    </div>
+                    {characterWorldGroups.length ? (
+                      characterWorldGroups.map(({ worldName, characters: worldCharacters }) => (
+                        <section className="world-character-group" key={worldName} aria-label={`${worldName} 캐릭터 선택`}>
+                          <h3 className="world-character-heading">{worldName}</h3>
+                          <div className="active-character-list">
+                            {worldCharacters.map((character) => (
+                              <label className="active-character-option" key={character.ocid}>
+                                <input
+                                  type="checkbox"
+                                  aria-label={`실사용 캐릭터 ${character.nickname} Lv. ${character.level}`}
+                                  checked={activeCharacterIds.includes(character.ocid)}
+                                  onChange={() => toggleActiveCharacter(character.ocid)}
+                                />
+                                <span className="active-character-avatar">
+                                  {character.image
+                                    ? <img src={character.image} alt="" loading="lazy" />
+                                    : <span>{character.nickname.slice(0, 1)}</span>}
+                                </span>
+                                <span className="active-character-details">
+                                  <strong>{character.nickname}</strong>
+                                  <small>{character.characterClass || '직업 정보 없음'} · Lv. {character.level || '-'}</small>
+                                </span>
+                                <span className="active-character-score">
+                                  {character.boss380HexaScore === null || character.boss380HexaScore === undefined
+                                    ? '헥사 조회 전'
+                                    : `헥사 ${Number(character.boss380HexaScore).toLocaleString('ko-KR')}`}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </section>
+                      ))
+                    ) : (
+                      <div className="empty-state">
+                        <span className="empty-icon">N</span>
+                        <strong>불러온 캐릭터가 없습니다</strong>
+                        <p>Nexon API 키를 입력하고 캐릭터 불러오기를 눌러주세요.</p>
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
+
+              {view === 'characters' && (
+                <>
                   <section className="character-section">
                     <div className="section-heading">
                       <div>
-                        <p className="eyebrow">MY CHARACTERS</p>
-                        <h2>내 캐릭터 <span className="character-count">{characters.length}</span></h2>
+                        <p className="eyebrow">MY ACTIVE CHARACTERS</p>
+                        <h2>실사용 캐릭터 <span className="character-count">{activeCharacters.length}</span></h2>
                       </div>
                       <div className="character-tools">
                         <span className="updated-count">보스380 헥사환산 기준으로 정렬</span>
@@ -617,14 +832,14 @@ function App() {
                           className="outline-button character-score-refresh"
                           type="button"
                           onClick={refreshMapleScouterData}
-                          disabled={!selectedCharacter || busy === 'maplescouter-refresh'}
+                          disabled={!selectedCharacter || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}
                         >
-                          {busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : 'MapleScouter 자동 갱신'}
+                          {busy === 'maplescouter-check' ? '확장 확인 중...' : busy === 'maplescouter-refresh' ? 'MapleScouter 수집 중...' : 'MapleScouter 자동 갱신'}
                         </button>
                       </div>
                     </div>
-                    {characters.length ? (
-                      characterWorldGroups.map(({ worldName, characters: worldCharacters }) => (
+                    {activeCharacters.length ? (
+                      activeCharacterWorldGroups.map(({ worldName, characters: worldCharacters }) => (
                         <section className="world-character-group" key={worldName} aria-label={`${worldName} 캐릭터`}>
                           <h3 className="world-character-heading">{worldName}</h3>
                           <div className="character-grid">
@@ -661,8 +876,9 @@ function App() {
                     ) : (
                       <div className="empty-state">
                         <span className="empty-icon">＋</span>
-                        <strong>아직 연결된 캐릭터가 없습니다</strong>
-                        <p>위에 Nexon Open API 키를 입력하면 계정의 모든 캐릭터를 불러옵니다.</p>
+                        <strong>{characters.length ? '사용 캐릭터가 선택되지 않았습니다' : '아직 불러온 캐릭터가 없습니다'}</strong>
+                        <p>{characters.length ? '계정 설정에서 메인에 표시할 캐릭터를 선택하세요.' : '계정 설정에서 Nexon API 키로 260레벨 이상 캐릭터를 불러오세요.'}</p>
+                        <button className="outline-button" type="button" onClick={() => setView('settings')}>계정 설정 열기</button>
                       </div>
                     )}
                   </section>
@@ -742,11 +958,11 @@ function App() {
                           <div><p className="eyebrow">NEXON SCHEDULER</p><h2>내 캐릭터 미완료 일정</h2></div>
                           {selectedCharacter && <span className="updated-count">선택 캐릭터: {selectedCharacter.nickname}</span>}
                         </div>
-                        {!characters.length ? (
-                          <div className="empty-state compact"><strong>연결된 캐릭터가 없습니다</strong><p>내 정보에서 Nexon API 키로 캐릭터를 동기화하세요.</p></div>
+                        {!activeCharacters.length ? (
+                          <div className="empty-state compact"><strong>사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 사용할 캐릭터를 선택하세요.</p></div>
                         ) : (
                           <div className="schedule-character-list">
-                            {characters.map((character) => {
+                            {activeCharacters.map((character) => {
                               const scheduler = character.scheduler || {};
                               const daily = (scheduler.daily_contents || []).filter((item) => isIncomplete(item));
                               const weekly = (scheduler.weekly_contents || []).filter((item) => isIncomplete(item));
@@ -792,7 +1008,7 @@ function App() {
                           </div>
                         )}
                         <p className="privacy-note">
-                          최근 동기화된 Nexon 스케줄러 기준입니다. 최신 현황을 불러오려면 내 정보에서 API 키로 다시 동기화하세요.
+                          최근 동기화된 Nexon 스케줄러 기준입니다. 최신 현황을 불러오려면 계정 설정에서 API 키로 다시 동기화하세요.
                         </p>
                       </section>
                     </>

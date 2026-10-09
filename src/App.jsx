@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import { workerRequest } from './workerApi';
 import bossRecommendationSettings from './boss-recommendations.json';
+import {
+  bossRecommendationForCharacter,
+  maxPartySizeForBoss,
+  recommendationsForCharacter,
+} from './bossRecommendations';
 
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const workerApiUrl = import.meta.env.VITE_WORKER_API_URL;
@@ -192,63 +197,6 @@ function validActiveCharacterIds(ids, characters) {
   return [...new Set(ids.filter((ocid) => typeof ocid === 'string' && availableIds.has(ocid)))];
 }
 
-function maxPartySizeForBoss(boss) {
-  return bossRecommendationSettings.maxPartySizeByBoss?.[boss.bossId.toLowerCase()]
-    || bossRecommendationSettings.maxPartySizeByFamily[boss.familyId]
-    || bossRecommendationSettings.defaultMaxPartySize;
-}
-
-function recommendationsForCharacter(character, multipliers, { includeSolo = false } = {}) {
-  const multiplierByBoss = new Map();
-  for (const entry of multipliers) {
-    if (entry.nickname?.toLocaleLowerCase('ko') !== character.nickname.toLocaleLowerCase('ko')) continue;
-    const value = Number(entry.multiplier);
-    const key = entry.bossId.toLowerCase();
-    multiplierByBoss.set(key, Math.max(value, multiplierByBoss.get(key) || 0));
-  }
-  const candidatesByFamily = new Map();
-  for (const boss of bossRecommendationSettings.bosses) {
-    const multiplier = multiplierByBoss.get(boss.bossId.toLowerCase());
-    if (!Number.isFinite(multiplier)) continue;
-    const maxPartySize = maxPartySizeForBoss(boss);
-    const party = bossRecommendationSettings.partyMultiplierThresholds
-      .filter(({ partySize, minimumMultiplier }) => (
-        partySize <= maxPartySize && multiplier >= minimumMultiplier
-      ))
-      .sort((left, right) => left.partySize - right.partySize)[0];
-    if (!party || (party.partySize === 1 && !includeSolo)) continue;
-    const candidate = {
-      ...boss,
-      multiplier,
-      maxPartySize,
-      difficultyRank: bossRecommendationSettings.difficultyRanks[boss.difficulty] || 0,
-      recommendedPartySize: party.partySize,
-      personalPrice: boss.changedPrice / party.partySize,
-    };
-    const familyCandidates = candidatesByFamily.get(boss.familyId) || [];
-    familyCandidates.push(candidate);
-    candidatesByFamily.set(boss.familyId, familyCandidates);
-  }
-  const bestByFamily = [...candidatesByFamily.values()].map((familyCandidates) => {
-    const override = bossRecommendationSettings.highDifficultyOverrides.includes(familyCandidates[0].familyId);
-    if (override) {
-      return familyCandidates.sort((left, right) => right.difficultyRank - left.difficultyRank
-        || right.personalPrice - left.personalPrice)[0];
-    }
-    return familyCandidates.sort((left, right) => right.personalPrice - left.personalPrice
-      || right.difficultyRank - left.difficultyRank)[0];
-  });
-  const sortByPersonalPrice = (left, right) => right.personalPrice - left.personalPrice
-    || right.difficultyRank - left.difficultyRank
-    || left.name.localeCompare(right.name, 'ko');
-  const weekly = bestByFamily.filter(({ cycle }) => cycle === 'weekly').sort(sortByPersonalPrice);
-  const monthly = bestByFamily.filter(({ cycle }) => cycle === 'monthly').sort(sortByPersonalPrice);
-  return [
-    ...weekly.slice(0, bossRecommendationSettings.recommendationLimit),
-    ...monthly,
-  ];
-}
-
 function bossDetails(bossId) {
   const boss = bossRecommendationSettings.bosses.find((entry) => entry.bossId.toLowerCase() === bossId.toLowerCase());
   return boss ? {
@@ -388,14 +336,14 @@ function groupCharactersByWorld(characters) {
     .map(([worldName, worldCharacters]) => ({
       worldName,
       characters: worldCharacters.sort((left, right) => (
-        compareScore(left, right)
-        || (Number(right.level) || 0) - (Number(left.level) || 0)
+        (Number(right.level) || 0) - (Number(left.level) || 0)
+        || compareScore(left, right)
         || left.nickname.localeCompare(right.nickname, 'ko')
       )),
     }))
     .sort((left, right) => (
-      compareScore(left.characters[0], right.characters[0])
-      || (Number(right.characters[0]?.level) || 0) - (Number(left.characters[0]?.level) || 0)
+      (Number(right.characters[0]?.level) || 0) - (Number(left.characters[0]?.level) || 0)
+      || compareScore(left.characters[0], right.characters[0])
       || left.worldName.localeCompare(right.worldName, 'ko')
     ));
 }
@@ -1207,7 +1155,13 @@ function App() {
   }
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
-  const activeCharacters = characters.filter(({ ocid }) => activeCharacterIds.includes(ocid));
+  const activeCharacters = characters
+    .filter(({ ocid }) => activeCharacterIds.includes(ocid))
+    .sort((left, right) => (
+      (Number(right.level) || 0) - (Number(left.level) || 0)
+      || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
+      || left.nickname.localeCompare(right.nickname, 'ko')
+    ));
   const activeOcids = new Set(activeCharacters.map(({ ocid }) => ocid));
   const personalParties = allGroupParties.filter((party) => (
     (party.members || []).some((member) => member.ownerSub === account?.sub && activeOcids.has(member.ocid))
@@ -1766,11 +1720,11 @@ function App() {
                             .sort((left, right) => Number(isIncomplete(right.item, true)) - Number(isIncomplete(left.item, true))
                               || bossFamilyOrder(left.option.familyKey) - bossFamilyOrder(right.option.familyKey)
                               || (bossFamilyTopPrice[right.option.familyKey] || 0) - (bossFamilyTopPrice[left.option.familyKey] || 0));
-                          const recommendedBosses = recommendationsForCharacter(character, accountMultipliers.filter((entry) => (
+                          const characterMultipliers = accountMultipliers.filter((entry) => (
                             entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
-                          )), { includeSolo: true });
+                          ));
+                          const recommendedBosses = recommendationsForCharacter(character, characterMultipliers, { includeSolo: true });
                           const recommendedBossIds = new Set(recommendedBosses.map(({ bossId }) => bossId));
-                          const recommendedBossById = new Map(recommendedBosses.map((boss) => [boss.bossId, boss]));
                           const scheduleBossGroups = [];
                           for (const entry of availableBosses) {
                             let family = scheduleBossGroups.find(({ familyKey }) => familyKey === entry.option.familyKey);
@@ -1790,7 +1744,11 @@ function App() {
                           return (
                             <article className="my-schedule-character" key={character.ocid}>
                               <header className="my-schedule-character-heading">
-                                {character.image ? <img src={character.image} alt="" loading="lazy" /> : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
+                                <span className="my-schedule-character-art">
+                                  {character.image
+                                    ? <img src={character.image} alt="" loading="lazy" />
+                                    : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
+                                </span>
                                 <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'}</small></div>
                               </header>
                               <div className="schedule-preferences schedule-boss-only" aria-label={`${character.nickname} 보스 선택`}>
@@ -1850,8 +1808,10 @@ function App() {
                                   <h3><span aria-hidden="true">⚔</span>보스<span>{selectedBosses.length}</span></h3>
                                   <div className="schedule-tasks">
                                     {selectedBosses.length ? selectedBosses.map(({ item, option }) => {
-                                      const recommendation = recommendedBossById.get(option.bossId) || { recommendedPartySize: 1 };
-                                      const sizeLabel = recommendationPartyLabel(recommendation.recommendedPartySize);
+                                      const recommendation = bossRecommendationForCharacter(character, characterMultipliers, option);
+                                      const sizeLabel = recommendation.recommendedPartySize
+                                        ? recommendationPartyLabel(recommendation.recommendedPartySize)
+                                        : '불가능';
                                       const pending = isIncomplete(item, true);
                                       const icon = bossImageFor(option.bossId);
                                       return (

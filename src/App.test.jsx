@@ -314,7 +314,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     }
     const payload = method === 'POST' && path === '/api/characters/verify'
       ? {
-        characters: syncedCharacters,
+        characters: [...syncedCharacters].reverse(),
         skippedCharacters: ['숨길캐릭터'],
         schedulerUnavailable: [],
         verified: true,
@@ -399,6 +399,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByTitle('내 정보'));
   expect(screen.queryByRole('heading', { name: '실사용 캐릭터 2' })).toBeNull();
   expect(screen.queryByRole('searchbox', { name: '캐릭터 검색' })).toBeNull();
+  expect([...document.querySelectorAll('.my-schedule-character-heading strong')]
+    .map(({ textContent }) => textContent))
+    .toEqual(['오잉느', '아잉느']);
+  expect(document.querySelector('.my-schedule-character-art img')).not.toBeNull();
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
   expect(screen.queryByRole('button', { name: /최고레벨/ })).toBeNull();

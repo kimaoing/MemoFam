@@ -19,7 +19,11 @@
     "start": "BROWSER=none WDS_SOCKET_PORT=0 vite --port 3000",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest"
+    "test": "vitest",
+    "worker:dev": "npm --prefix worker run dev",
+    "worker:test": "npm --prefix worker test",
+    "worker:typecheck": "npm --prefix worker run typecheck",
+    "worker:deploy": "npm --prefix worker run deploy"
   },
   "eslintConfig": {
     "extends": [

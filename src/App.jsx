@@ -317,6 +317,7 @@ function App() {
   const [partyDraft, setPartyDraft] = useState(null);
   const [allGroupParties, setAllGroupParties] = useState([]);
   const [partyOverviewSearch, setPartyOverviewSearch] = useState('');
+  const pinnedPartyIdsRef = useRef(new Set());
   const [partyOverviewSort, setPartyOverviewSort] = useState('boss-name');
   const [partyOverviewFilters, setPartyOverviewFilters] = useState({
     mine: false,
@@ -1504,12 +1505,20 @@ function App() {
   });
   const normalizedPartySearch = partyOverviewSearch.trim().toLocaleLowerCase('ko');
   const hasPartyTypeFilter = partyOverviewFilters.mine || partyOverviewFilters.empty;
+  const isPartyDraftActive = partyDraft?.groupId === selectedGroupId;
+  if (!isPartyDraftActive) pinnedPartyIdsRef.current.clear();
   const visiblePartyEntries = partyOverviewEntries
-    .filter(({ config, members, summary, hasOwnMember, isEmpty }) => {
+    .filter(({ party, config, members, summary, hasOwnMember, isEmpty }) => {
+      const pinned = pinnedPartyIdsRef.current;
+      const passesBelowTarget = !partyOverviewFilters.belowTarget || summary.totalMultiplier < 100;
+      const passesUncleared = !partyOverviewFilters.uncleared || !summary.cleared;
+      if (passesBelowTarget && passesUncleared) pinned.add(party.partyId);
+      // 편성 완료 전에는 편성 중 조건을 벗어난 파티도 계속 표시한다.
+      const keepVisible = isPartyDraftActive && pinned.has(party.partyId);
       if (hasPartyTypeFilter
         && !((partyOverviewFilters.mine && hasOwnMember) || (partyOverviewFilters.empty && isEmpty))) return false;
-      if (partyOverviewFilters.belowTarget && summary.totalMultiplier >= 100) return false;
-      if (partyOverviewFilters.uncleared && summary.cleared) return false;
+      if (!keepVisible && !passesBelowTarget) return false;
+      if (!keepVisible && !passesUncleared) return false;
       if (!normalizedPartySearch) return true;
       const searchableText = [
         config.name,

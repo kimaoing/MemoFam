@@ -445,11 +445,37 @@ async function listGroups(env: Env, principal: GooglePrincipal): Promise<Respons
   return json({ groups: result.results || [] });
 }
 
+async function getDisplayName(env: Env, sub: string): Promise<string> {
+  const row = await env.DB.prepare('SELECT display_name AS displayName FROM user_profiles WHERE google_sub = ?')
+    .bind(sub).first<{ displayName: string }>();
+  return row?.displayName?.trim() || '';
+}
+
+async function saveDisplayName(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+  if (displayName.length > 20) throw new ApiError(400, '닉네임은 20자 이하로 입력해 주세요.');
+  if (!displayName) {
+    await env.DB.prepare('DELETE FROM user_profiles WHERE google_sub = ?').bind(principal.sub).run();
+  } else {
+    await env.DB.prepare(`
+      INSERT INTO user_profiles (google_sub, email, display_name, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT (google_sub) DO UPDATE SET
+        email = excluded.email, display_name = excluded.display_name, updated_at = excluded.updated_at
+    `).bind(principal.sub, principal.email, displayName, new Date().toISOString()).run();
+  }
+  return json({ displayName });
+}
+
 async function listGroupMembers(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
   const group = await getGroup(env, groupId, principal.email);
   const result = await env.DB.prepare(`
     SELECT gm.email,
       COALESCE((
+        SELECT NULLIF(trim(up.display_name), '')
+        FROM user_profiles up
+        WHERE lower(up.email) = lower(gm.email)
+        LIMIT 1
+      ), (
         SELECT NULLIF(trim(s.name), '')
         FROM auth_sessions s
         WHERE lower(s.email) = lower(gm.email)
@@ -1341,7 +1367,7 @@ async function createGoogleSession(env: Env, origin: string, body: Record<string
   ).run();
   return json({
     sessionToken,
-    account: { sub: profile.sub, email: profile.email.toLowerCase(), name: profile.name || '' },
+    account: { sub: profile.sub, email: profile.email.toLowerCase(), name: await getDisplayName(env, profile.sub) || profile.name || '' },
   }, 201);
 }
 
@@ -1371,7 +1397,13 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const principal = await authenticate(request, env);
   if (request.method === 'GET' && path.length === 3 && path[1] === 'auth' && path[2] === 'session') {
-    return json({ account: principal });
+    return json({ account: { ...principal, name: await getDisplayName(env, principal.sub) || principal.name } });
+  }
+  if (request.method === 'GET' && path.length === 2 && path[1] === 'profile') {
+    return json({ displayName: await getDisplayName(env, principal.sub) });
+  }
+  if (request.method === 'PUT' && path.length === 2 && path[1] === 'profile') {
+    return saveDisplayName(env, principal, await readBody(request));
   }
   if (request.method === 'POST' && path.length === 3 && path[1] === 'group-invites' && path[2] === 'accept') {
     return acceptGroupInvite(env, principal, await readBody(request));

@@ -347,7 +347,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-boss-family-option > strong { color: #343949; font-size: 15px; }
 .group-boss-difficulty-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
 .group-boss-quick-menu { position: sticky; z-index: 5; top: 0; display: flex; width: 270px; height: 100vh; max-height: 100vh; flex: 0 0 270px; flex-direction: column; align-self: flex-start; gap: 12px; overflow: visible; padding: 16px 10px 12px; border-right: 1px solid #343847; background: #20232e; color: #e4e6ef; transition: width .28s cubic-bezier(.2, .75, .25, 1), flex-basis .28s cubic-bezier(.2, .75, .25, 1), padding .28s ease, max-height .28s ease; }
-.group-boss-quick-menu.collapsed { width: 54px; flex-basis: 54px; padding: 12px 6px; }
+.group-boss-quick-menu.collapsed { width: 0; flex-basis: 0; padding: 0; border: 0; gap: 0; }
 .group-boss-quick-menu.collapsed > header { padding: 0; border: 0; }
 .group-boss-quick-menu.collapsed > header .group-quick-menu-heading > div,
 .group-boss-quick-menu.collapsed > .group-boss-family-list,
@@ -420,7 +420,8 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-quick-party-editor-heading > img { width: 52px; height: 52px; object-fit: contain; }
 .group-quick-party-editor .group-quick-roster { margin-top: 0; }
 .group-character-quick-menu { position: sticky; z-index: 5; top: 0; display: flex; width: 390px; height: 100vh; max-height: 100vh; flex: 0 0 390px; flex-direction: column; gap: 10px; overflow: visible; padding: 14px; border-left: 1px solid #dfe3ec; background: #fff; transition: width .28s cubic-bezier(.2, .75, .25, 1), flex-basis .28s cubic-bezier(.2, .75, .25, 1), padding .28s ease, max-height .28s ease; }
-.group-character-quick-menu.collapsed { width: 58px; flex-basis: 58px; padding: 12px 6px; }
+.group-character-quick-menu.collapsed { width: 0; flex-basis: 0; padding: 0; border: 0; gap: 0; }
+.group-character-quick-menu.collapsed .group-character-quick-filters { display: none; }
 .group-character-quick-menu.collapsed > header { padding: 0; border: 0; }
 .group-character-quick-menu.collapsed > header .group-quick-menu-heading > div,
 .group-character-quick-menu.collapsed > .group-character-quick-list { display: none; }

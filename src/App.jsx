@@ -303,6 +303,7 @@ function groupCharactersByWorld(characters) {
 function App() {
   const [accessToken, setAccessToken] = useState('');
   const [account, setAccount] = useState(null);
+  const [displayNameDraft, setDisplayNameDraft] = useState('');
   const [characters, setCharacters] = useState([]);
   const [activeCharacterIds, setActiveCharacterIds] = useState([]);
   const [selectedCharacterId, setSelectedCharacterId] = useState('');
@@ -333,6 +334,7 @@ function App() {
   const [selectedBossDifficultyId, setSelectedBossDifficultyId] = useState('');
   const [quickPartyBossId, setQuickPartyBossId] = useState('');
   const [selectedQuickCharacterKey, setSelectedQuickCharacterKey] = useState('');
+  const [showAllQuickCharacters, setShowAllQuickCharacters] = useState(false);
   const [quickPartySizeFilters, setQuickPartySizeFilters] = useState({ 3: true, 2: true, 1: false });
   const [partyWarningPopup, setPartyWarningPopup] = useState(null);
   const [activeBuilderPartyId, setActiveBuilderPartyId] = useState('');
@@ -680,6 +682,26 @@ function App() {
     });
   }
 
+  async function saveDisplayName(event) {
+    event.preventDefault();
+    setBusy('display-name');
+    try {
+      const result = await workerRequest(accessToken, '/api/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ displayName: displayNameDraft.trim() }),
+      });
+      const name = result.displayName || '';
+      setAccount((current) => ({ ...current, name }));
+      setDisplayNameDraft(name);
+      if (selectedGroupId) await loadGroupData(accessToken, selectedGroupId);
+      setNotice({ type: 'success', text: name ? '표시 닉네임을 저장했습니다.' : '표시 닉네임을 초기화했습니다.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: `닉네임을 저장하지 못했습니다: ${error.message}` });
+    } finally {
+      setBusy('');
+    }
+  }
+
   function focusQuickParty(party) {
     if (quickPartyBossId && focusedPartyId === party.partyId) {
       setFocusedPartyId('');
@@ -982,6 +1004,7 @@ function App() {
     ]);
     setAccessToken(token);
     setAccount({ email: profile.email, name: profile.name, sub: profile.sub });
+    setDisplayNameDraft(profile.name || '');
     if (invitation) setInvitePrompt(invitation);
     if (!silent && !inviteToken) setNotice({ type: 'success', text: `${profile.email} 계정으로 연결했습니다.` });
   }
@@ -1674,7 +1697,7 @@ function App() {
     ))
     .filter((character) => {
       const activeSizes = Object.keys(quickPartySizeFilters).filter((size) => quickPartySizeFilters[size]).map(Number);
-      if (!selectedQuickPartyBoss || !activeSizes.length) return true;
+      if (showAllQuickCharacters || !selectedQuickPartyBoss || !activeSizes.length) return true;
       if (character.assignedParty) return false;
       return activeSizes.includes(character.quickRecommendation?.recommendedPartySize);
     });
@@ -1989,6 +2012,14 @@ function App() {
                 {label}
               </button>
             ))}
+            <button
+              className={showAllQuickCharacters ? 'active' : ''}
+              type="button"
+              aria-pressed={showAllQuickCharacters}
+              onClick={() => setShowAllQuickCharacters((current) => !current)}
+            >
+              전체 캐릭터
+            </button>
           </div>
         )}
       </header>
@@ -2207,6 +2238,32 @@ function App() {
             <>
               {view === 'settings' && (
                 <>
+                  <section className="sync-card display-name-card">
+                    <form className="sync-form" onSubmit={saveDisplayName}>
+                      <div className="sync-copy">
+                        <div>
+                          <p className="eyebrow">PROFILE</p>
+                          <h2>표시 닉네임</h2>
+                          <p>그룹원에게 보이는 이름입니다. 비워 두면 Google 계정 이름이 사용됩니다.</p>
+                        </div>
+                      </div>
+                      <label className="sr-only" htmlFor="display-name">표시 닉네임</label>
+                      <div className="api-key-field">
+                        <input
+                          id="display-name"
+                          type="text"
+                          value={displayNameDraft}
+                          onChange={(event) => setDisplayNameDraft(event.target.value)}
+                          maxLength={20}
+                          placeholder="표시할 닉네임 (최대 20자)"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <button className="primary-button" type="submit" disabled={busy === 'display-name'}>
+                        {busy === 'display-name' ? '저장 중...' : '닉네임 저장'}
+                      </button>
+                    </form>
+                  </section>
                   <section className="sync-card">
                     <div className="sync-copy">
                       <span className="sync-mark">N</span>

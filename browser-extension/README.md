@@ -1,6 +1,6 @@
 # MemoFam MapleScouter Reader
 
-This Chrome/Edge Manifest V3 extension reads the result page that MemoFam opens and sends the boss380 Hexa score and boss multipliers back to that app tab. It reads result content only from `https://maplescouter.com/ko/result*` and does not read or store login tokens.
+This Chrome/Edge Manifest V3 extension reads the result page that MemoFam opens and sends the boss380 Hexa score and boss multipliers back to that app tab. A multiplier labeled `[파티]` is divided by three before it is saved so it matches the solo multiplier scale. It reads result content only from `https://maplescouter.com/ko/result*` and does not read or store login tokens.
 
 ## Install
 

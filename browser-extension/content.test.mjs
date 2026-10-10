@@ -45,6 +45,14 @@ test('reads the MapleScouter score and multipliers and sends them to the opener'
       <div class="relative z-10"><span>25.5%</span></div>
       <div><span>보스380</span><div><span>헥사</span><span>70,000</span></div></div>
     </div>
+    <div class="bg-surface-gray-surface-0">
+      <img src="/bossIcon/extreme_kaling.png" alt="boss">
+      <div class="relative z-10">
+        <div>불가능</div>
+        <div>67,229</div>
+        <div>[파티] 31%</div>
+      </div>
+    </div>
   `, {
     runScripts: 'outside-only',
     url: 'https://maplescouter.com/ko/result?name=%EC%95%84%EC%9E%89%EB%8A%90',
@@ -64,7 +72,10 @@ test('reads the MapleScouter score and multipliers and sends them to the opener'
     payload: {
       nickname: '아잉느',
       boss380HexaScore: 70000,
-      multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }],
+      multipliers: [
+        { bossId: 'normal_kaling', multiplier: 25.5 },
+        { bossId: 'extreme_kaling', multiplier: 31 / 3 },
+      ],
     },
   });
   dom.window.close();

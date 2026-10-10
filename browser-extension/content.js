@@ -34,14 +34,20 @@
 
         const card = image.closest('div.bg-surface-gray-surface-0');
         const infoArea = card?.querySelector('div.relative.z-10');
-        const percentages = [...(infoArea?.children || [])].flatMap((element) => (
-          (element.textContent || '').match(/\d+(?:\.\d+)?%/g) || []
-        ));
-        const multiplier = Number(percentages.at(-1)?.replace('%', ''));
-        if (!Number.isFinite(multiplier)) return [];
+        const multiplier = [...(infoArea?.children || [])].flatMap((element) => {
+          const text = element.textContent || '';
+          return [...text.matchAll(/(\d+(?:\.\d+)?)%/g)].map((match) => ({
+            value: Number(match[1]),
+            isParty: /\[파티\]/.test(text),
+          }));
+        }).at(-1);
+        if (!Number.isFinite(multiplier?.value)) return [];
 
         seenBossIds.add(bossId);
-        return [{ bossId, multiplier }];
+        return [{
+          bossId,
+          multiplier: multiplier.isParty ? multiplier.value / 3 : multiplier.value,
+        }];
       });
   }
 

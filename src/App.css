@@ -1241,3 +1241,8 @@ html[data-theme='light'] body { background: #f4f5f8; }
 .app-shell[data-theme='dark'] .group-character-quick-filters button { border-color: #454d62; background: #191c25; color: #c5c9d8; }
 .app-shell[data-theme='dark'] .group-character-quick-filters button.active { border-color: #7185e0; background: #5468d4; color: #fff; }
 .app-shell[data-theme='dark'] .group-main-party-card.selected-party { border-color: #8da0ff; background: #232a4d; box-shadow: 0 0 0 4px rgba(141, 160, 255, .35); }
+
+.group-main-party-groups { display: grid; gap: 10px; }
+.group-main-party-boss-group { min-width: 0; }
+.group-main-party-boss-group > h3 { margin: 4px 0 6px; color: #50586b; font-size: 13px; font-weight: 800; }
+.app-shell[data-theme='dark'] .group-main-party-boss-group > h3 { color: #d4d7e2; }

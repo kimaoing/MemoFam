@@ -317,7 +317,7 @@ function App() {
   const [partyDraft, setPartyDraft] = useState(null);
   const [allGroupParties, setAllGroupParties] = useState([]);
   const [partyOverviewSearch, setPartyOverviewSearch] = useState('');
-  const [partyOverviewSort, setPartyOverviewSort] = useState('default');
+  const [partyOverviewSort, setPartyOverviewSort] = useState('boss-name');
   const [partyOverviewFilters, setPartyOverviewFilters] = useState({
     mine: false,
     empty: false,
@@ -680,6 +680,11 @@ function App() {
   }
 
   function focusQuickParty(party) {
+    if (quickPartyBossId && focusedPartyId === party.partyId) {
+      setFocusedPartyId('');
+      setQuickPartyBossId('');
+      return;
+    }
     setFocusedPartyId(party.partyId);
     setQuickPartyBossId(party.bossId);
   }
@@ -1239,7 +1244,7 @@ function App() {
     setPartyDraft(null);
     setSelectedGroupId(groupId);
     setPartyOverviewSearch('');
-    setPartyOverviewSort('default');
+    setPartyOverviewSort('boss-name');
     setPartyOverviewFilters({ mine: false, empty: false, belowTarget: false, uncleared: false });
     setQuickPartyBossId('');
     setSelectedQuickCharacterKey('');
@@ -1529,10 +1534,18 @@ function App() {
       return Number(left.summary.cleared) - Number(right.summary.cleared)
         || left.index - right.index;
     });
+  const visiblePartyBossGroups = partyOverviewSort === 'boss-name'
+    ? visiblePartyEntries.reduce((groups, entry) => {
+      const last = groups[groups.length - 1];
+      if (last && last.name === entry.config.name) last.entries.push(entry);
+      else groups.push({ key: entry.config.name, name: entry.config.name, entries: [entry] });
+      return groups;
+    }, [])
+    : [{ key: 'all', name: '', entries: visiblePartyEntries }];
   const hasActivePartyOverviewFilters = Boolean(
     normalizedPartySearch
     || Object.values(partyOverviewFilters).some(Boolean)
-    || partyOverviewSort !== 'default',
+    || partyOverviewSort !== 'boss-name',
   );
   const activeCharacters = characters
     .filter(({ ocid }) => activeCharacterIds.includes(ocid))
@@ -2568,10 +2581,10 @@ function App() {
                               <label className="party-overview-sort">
                                 <span>정렬</span>
                                 <select value={partyOverviewSort} onChange={(event) => setPartyOverviewSort(event.target.value)}>
-                                  <option value="default">기본 순서</option>
+                                  <option value="default">미클 우선 순서</option>
                                   <option value="multiplier-asc">배율 낮은 순</option>
                                   <option value="members-asc">인원 적은 순</option>
-                                  <option value="boss-name">보스 이름 순</option>
+                                  <option value="boss-name">보스 이름 순 (기본)</option>
                                 </select>
                               </label>
                               <span className="party-overview-result-count" aria-live="polite">
@@ -2609,7 +2622,7 @@ function App() {
                                   type="button"
                                   onClick={() => {
                                     setPartyOverviewSearch('');
-                                    setPartyOverviewSort('default');
+                                    setPartyOverviewSort('boss-name');
                                     setPartyOverviewFilters({ mine: false, empty: false, belowTarget: false, uncleared: false });
                                   }}
                                 >초기화</button>
@@ -2621,8 +2634,19 @@ function App() {
                           </div>
                           {currentGroupParties.length ? (
                             visiblePartyEntries.length ? (
+                              <div
+                                className="group-main-party-groups"
+                                onClick={(event) => {
+                                  if (!quickPartyBossId || event.target.closest('article, button, input, select, a, label')) return;
+                                  setFocusedPartyId('');
+                                  setQuickPartyBossId('');
+                                }}
+                              >
+                              {visiblePartyBossGroups.map(({ key, name, entries }) => (
+                              <section className="group-main-party-boss-group" key={key} aria-label={name ? `${name} 파티` : '파티 목록'}>
+                              {name && <h3>{name}</h3>}
                               <div className="group-main-party-grid">
-                              {visiblePartyEntries.map(({ party, config, summary, members }) => {
+                              {entries.map(({ party, config, summary, members }) => {
                                 const sameBossPartyNumber = currentGroupParties
                                   .filter(({ bossId }) => bossId === party.bossId)
                                   .findIndex(({ partyId }) => partyId === party.partyId) + 1;
@@ -2736,7 +2760,10 @@ function App() {
                                   </article>
                                 );
                               })}
-                            </div>
+                              </div>
+                              </section>
+                              ))}
+                              </div>
                             ) : (
                               <div className="party-overview-no-results">
                                 <span>조건에 맞는 파티가 없습니다.</span>
@@ -2745,7 +2772,7 @@ function App() {
                                   type="button"
                                   onClick={() => {
                                     setPartyOverviewSearch('');
-                                    setPartyOverviewSort('default');
+                                    setPartyOverviewSort('boss-name');
                                     setPartyOverviewFilters({ mine: false, empty: false, belowTarget: false, uncleared: false });
                                   }}
                                 >필터 초기화</button>

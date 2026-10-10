@@ -21,9 +21,6 @@ a { color: inherit; }
 .sidebar-edge-toggle:hover { border-color: #7889dd; background: #343a50; color: #fff; box-shadow: 0 5px 18px rgba(16, 19, 29, .36), 0 0 0 3px rgba(111, 130, 219, .18); transform: translateY(-50%) scale(1.06); }
 .sidebar-edge-toggle:active { transform: translateY(-50%) scale(.96); }
 .sidebar-edge-chevron { width: 18px; height: 18px; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.4; }
-.server-rail-toggle { right: -30px; }
-.server-rail.collapsed { width: 54px; flex-basis: 54px; }
-.server-rail.collapsed > :not(.server-rail-toggle) { display: none; }
 .rail-button { position: relative; display: grid; width: 74px; height: 72px; flex: 0 0 72px; place-items: center; border: 0; background: transparent; color: #dfe2ed; }
 .rail-avatar { display: grid; width: 68px; height: 68px; place-items: center; overflow: hidden; border-radius: 50%; background: #353a49; color: #e6e9f1; font-size: 17px; font-weight: 700; transition: border-radius .15s ease, background .15s ease; }
 .rail-avatar img { width: 100%; height: 100%; object-fit: contain; background: transparent; transform: scale(2.1); }
@@ -766,8 +763,6 @@ button:disabled { cursor: wait; opacity: .65; }
   .app-shell { flex-direction: column; }
   .app-shell:has(> .group-character-quick-menu) > .app-main { flex: 1 1 auto; }
   .server-rail { position: sticky; z-index: 10; top: 0; width: 100%; height: auto; min-height: 66px; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; gap: 6px; overflow-x: hidden; padding: 7px 11px; border-radius: 0; }
-  .server-rail-toggle { top: 50%; right: 8px; }
-  .server-rail.collapsed { width: 100%; min-height: 52px; flex-basis: auto; align-items: center; }
   .group-boss-quick-menu.collapsed { width: 100%; height: auto; max-height: 58px; flex-basis: auto; padding: 8px 10px; }
   .group-character-quick-menu.collapsed { width: 100%; height: auto; max-height: 62px; flex-basis: auto; padding: 8px 12px; border-top: 1px solid #dfe3ec; border-left: 0; }
   .group-boss-quick-menu.collapsed > header,

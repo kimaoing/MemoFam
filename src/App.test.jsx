@@ -710,14 +710,6 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(groupBossQuickMenu.nextElementSibling.classList.contains('app-main')).toBe(true);
   expect(groupBossQuickMenu.closest('.group-quick-party-builder')).toBeNull();
   expect(document.querySelector('.group-quick-party-builder .group-boss-family-list')).toBeNull();
-  const sidebarToggle = screen.getByRole('button', { name: '좌측 사이드바 접기' });
-  expect(sidebarToggle.querySelector('svg').dataset.direction).toBe('left');
-  expect(sidebarToggle.classList.contains('sidebar-edge-toggle')).toBe(true);
-  fireEvent.click(sidebarToggle);
-  expect(document.querySelector('.server-rail').classList.contains('collapsed')).toBe(true);
-  const expandSidebarToggle = screen.getByRole('button', { name: '좌측 사이드바 펼치기' });
-  expect(expandSidebarToggle.querySelector('svg').dataset.direction).toBe('right');
-  fireEvent.click(expandSidebarToggle);
   const bossMenuToggle = screen.getByRole('button', { name: '보스 빠른 메뉴 접기' });
   expect(bossMenuToggle.querySelector('svg').dataset.direction).toBe('left');
   fireEvent.click(bossMenuToggle);

@@ -336,7 +336,6 @@ function App() {
   const [activeBuilderPartyId, setActiveBuilderPartyId] = useState('');
   const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
   const [dragOverPartyId, setDragOverPartyId] = useState('');
-  const [serverRailCollapsed, setServerRailCollapsed] = useState(() => window.innerWidth <= 560);
   const [bossQuickMenuCollapsed, setBossQuickMenuCollapsed] = useState(() => window.innerWidth <= 560);
   const [characterQuickMenuCollapsed, setCharacterQuickMenuCollapsed] = useState(() => window.innerWidth <= 560);
   const [inviteLink, setInviteLink] = useState('');
@@ -2006,24 +2005,7 @@ function App() {
       onDragOver={handleGroupCanvasDragOver}
       onDrop={dropPartyCharacterOnEmptySpace}
     >
-      <aside className={`server-rail ${serverRailCollapsed ? 'collapsed' : ''}`} aria-label="내 정보와 그룹">
-        <button
-          className="sidebar-edge-toggle server-rail-toggle"
-          type="button"
-          aria-label={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
-          aria-expanded={!serverRailCollapsed}
-          title={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
-          onClick={() => setServerRailCollapsed((collapsed) => !collapsed)}
-        >
-          <svg
-            className="sidebar-edge-chevron"
-            data-direction={serverRailCollapsed ? 'right' : 'left'}
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-          >
-            <path d={serverRailCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} />
-          </svg>
-        </button>
+      <aside className="server-rail" aria-label="내 정보와 그룹">
         <button
           className={`rail-button my-info-button ${view === 'characters' ? 'active' : ''}`}
           type="button"

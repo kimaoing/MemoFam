@@ -149,3 +149,16 @@ export function recommendationsForCharacter(character, multipliers, { includeSol
     ...monthly,
   ];
 }
+
+export function partyRecommendationsForCharacter(character, multipliers) {
+  const multiplierByBoss = readCharacterMultipliers(character, multipliers);
+  return bossRecommendationSettings.bosses
+    .map((boss) => {
+      const multiplier = multiplierByBoss.get(boss.bossId.toLowerCase());
+      return multiplier === undefined ? null : recommendationForMultiplier(boss, multiplier, false);
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.personalPrice - left.personalPrice
+      || right.difficultyRank - left.difficultyRank
+      || left.name.localeCompare(right.name, 'ko'));
+}

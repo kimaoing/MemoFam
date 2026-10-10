@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import bossRecommendationSettings from './boss-recommendations.json';
-import { bossRecommendationForCharacter, recommendationsForCharacter } from './bossRecommendations';
+import {
+  bossRecommendationForCharacter,
+  partyRecommendationsForCharacter,
+  recommendationsForCharacter,
+} from './bossRecommendations';
 
 const character = { nickname: '테스트' };
 const bossById = new Map(bossRecommendationSettings.bosses.map((boss) => [boss.bossId, boss]));
@@ -92,6 +96,22 @@ describe('boss recommendations', () => {
     expect(recommend(50)).toMatchObject({ recommendationStatus: 'recorded', recommendedPartySize: 2 });
     expect(recommend(99.9)).toMatchObject({ recommendationStatus: 'recorded', recommendedPartySize: 2 });
     expect(recommend(100)).toMatchObject({ recommendationStatus: 'recorded', recommendedPartySize: 1 });
+  });
+
+  test('keeps party-needed recommendations for each difficulty within a boss family', () => {
+    const multipliers = [
+      { nickname: character.nickname, bossId: 'chaos_kalos', multiplier: 50 },
+      { nickname: character.nickname, bossId: 'extreme_kalos', multiplier: 50 },
+    ];
+    const recommendations = recommendationsForCharacter(character, multipliers);
+    const partyRecommendations = partyRecommendationsForCharacter(character, multipliers);
+
+    expect(recommendations.find(({ familyId }) => familyId === 'kalos').bossId).toBe('extreme_kalos');
+    expect(partyRecommendations.map(({ bossId }) => bossId)).toEqual(
+      expect.arrayContaining(['chaos_kalos', 'extreme_kalos']),
+    );
+    expect(partyRecommendations.find(({ bossId }) => bossId === 'chaos_kalos'))
+      .toMatchObject({ recommendedPartySize: 2, multiplier: 50 });
   });
 
   test('uses the schedule family key to apply multi-person boss caps', () => {

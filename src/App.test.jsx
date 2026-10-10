@@ -721,6 +721,14 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(groupCharacterQuickMenu).not.toBeNull();
   expect(groupCharacterQuickMenu.previousElementSibling.classList.contains('app-main')).toBe(true);
   expect(groupCharacterQuickMenu.parentElement.classList.contains('app-shell')).toBe(true);
+  const groupmateQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
+    .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '그룹동료');
+  const unassignedGroupmateWarningTrigger = within(groupmateQuickCard)
+    .getByRole('button', { name: '그룹동료 그룹 파티 편성 필요 안내' });
+  fireEvent.click(unassignedGroupmateWarningTrigger);
+  const unassignedGroupmateWarning = screen.getByRole('dialog', { name: '그룹동료 그룹 파티 편성 필요' });
+  expect(unassignedGroupmateWarning.textContent).toContain('카오스 감시자 칼로스');
+  fireEvent.click(unassignedGroupmateWarningTrigger);
   const characterMenuToggle = screen.getByRole('button', { name: '캐릭터 빠른 메뉴 접기' });
   expect(characterMenuToggle.querySelector('svg').dataset.direction).toBe('right');
   fireEvent.click(characterMenuToggle);
@@ -770,8 +778,6 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(partyEditor).not.toBeNull();
   expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(2);
   const commitCountBeforeDraft = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
-  const groupmateQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
-    .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '그룹동료');
   expect(groupmateQuickCard.querySelector('.group-character-quick-details b').textContent).toBe('80.0%');
   const partyMutationCountBeforeDraft = workerCalls.filter(({ method, path }) => (
     ['POST', 'PUT', 'DELETE'].includes(method)

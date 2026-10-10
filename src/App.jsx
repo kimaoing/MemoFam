@@ -1602,20 +1602,18 @@ function App() {
     })),
     ...allGroupParties.filter(({ groupId }) => groupId !== selectedGroupId),
   ];
+  const quickAssignmentFamilyId = selectedQuickPartyBoss?.familyId
+    || (focusedQuickParty ? focusedQuickParty.familyId || bossDetails(focusedQuickParty.bossId).familyId : '');
   const quickPartyCandidates = groupCharacters
     .map((character) => {
-      const assignedParty = selectedQuickPartyBoss
+      const assignedParty = quickAssignmentFamilyId
         ? partiesAcrossGroups.find((party) => (
-          (party.familyId || bossDetails(party.bossId).familyId) === selectedQuickPartyBoss.familyId
+          (party.familyId || bossDetails(party.bossId).familyId) === quickAssignmentFamilyId
           && (party.members || []).some(({ ownerSub, ocid }) => (
             ownerSub === character.ownerSub && ocid === character.ocid
           ))
         ))
-        : partiesAcrossGroups.find((party) => (
-          (party.members || []).some(({ ownerSub, ocid }) => (
-            ownerSub === character.ownerSub && ocid === character.ocid
-          ))
-        ));
+        : null;
       const characterMultipliers = multipliers.filter((entry) => (
         (!entry.ownerSub || entry.ownerSub === character.ownerSub)
         && entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
@@ -1804,7 +1802,14 @@ function App() {
               <strong>{family.name}</strong>
               <div className="group-boss-difficulty-buttons" aria-label={`${family.name} 난이도`}>
                 {family.bosses.slice().sort(compareBossDifficulty).map((boss) => {
-                  const partiesForBoss = familyParties.filter(({ bossId }) => bossId === boss.bossId);
+                  const partiesForBoss = selectedQuickCharacter
+                    ? familyParties.filter(({ bossId, members = [] }) => (
+                      bossId === boss.bossId
+                      && members.some(({ ownerSub, ocid }) => (
+                        ownerSub === selectedQuickCharacter.ownerSub && ocid === selectedQuickCharacter.ocid
+                      ))
+                    ))
+                    : [];
                   return (
                     <button
                       className={`group-boss-difficulty difficulty-${boss.difficulty} ${quickPartyBossId === boss.bossId ? 'selected' : ''}`}
@@ -1812,8 +1817,8 @@ function App() {
                       disabled={busy === 'party-save'}
                       key={boss.bossId}
                       aria-pressed={quickPartyBossId === boss.bossId}
-                      aria-label={`${boss.difficultyLabel} ${boss.name} 파티 편성${selectedQuickRecommendedBossIds.has(boss.bossId) ? ', 추천 보스' : ''}${partiesForBoss.length ? `, 파티 ${partiesForBoss.length}개` : ''}`}
-                      title={`${boss.difficultyLabel} ${boss.name}${selectedQuickRecommendedBossIds.has(boss.bossId) ? ' · 선택 캐릭터 추천 보스' : ''}${partiesForBoss.length ? ` · 파티 ${partiesForBoss.length}개` : ''}`}
+                      aria-label={`${boss.difficultyLabel} ${boss.name} 파티 편성${selectedQuickRecommendedBossIds.has(boss.bossId) ? ', 추천 보스' : ''}${partiesForBoss.length ? `, 선택 캐릭터 포함 파티 ${partiesForBoss.length}개` : ''}`}
+                      title={`${boss.difficultyLabel} ${boss.name}${selectedQuickRecommendedBossIds.has(boss.bossId) ? ' · 선택 캐릭터 추천 보스' : ''}${partiesForBoss.length ? ` · 선택 캐릭터 포함 파티 ${partiesForBoss.length}개` : ''}`}
                       onClick={() => createEmptyBossParty(boss)}
                     >
                       {difficultyMarks[boss.difficulty] || boss.difficultyLabel.slice(0, 1)}

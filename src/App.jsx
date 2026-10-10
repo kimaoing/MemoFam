@@ -593,7 +593,12 @@ function App() {
     }
     updatePartyDraft((parties) => parties.map((party) => (
       party.partyId === partyId
-        ? { ...party, members: party.members.filter((member) => member.ocid !== character.ocid) }
+        ? {
+          ...party,
+          members: party.members.filter((member) => !(
+            member.ownerSub === character.ownerSub && member.ocid === character.ocid
+          )),
+        }
         : party
     )));
     setNotice({ type: 'success', text: '편성 변경을 임시 저장했습니다. 완료를 눌러 반영하세요.' });
@@ -738,14 +743,14 @@ function App() {
       .map((entry) => Number(entry.multiplier) || 0));
   }
 
-  function startPartyMemberDrag(event, character) {
+  function startPartyMemberDrag(event, character, assignedParty = null) {
     if (character.ownerSub !== account?.sub && selectedGroup?.role !== 'admin') {
       event.preventDefault();
       return;
     }
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', character.ocid);
-    setDraggedPartyCharacter(character);
+    event.dataTransfer.setData('text/plain', `${character.ownerSub}:${character.ocid}`);
+    setDraggedPartyCharacter({ ...character, draggedFromPartyId: assignedParty?.groupId === selectedGroupId ? assignedParty.partyId : '' });
   }
 
   function dragOverParty(event, party) {
@@ -758,11 +763,28 @@ function App() {
     event.preventDefault();
     setDragOverPartyId('');
     setActiveBuilderPartyId(party.partyId);
-    const ocid = event.dataTransfer.getData('text/plain');
-    const character = groupCharacters.find((entry) => entry.ocid === ocid);
+    const characterKey = event.dataTransfer.getData('text/plain');
+    const character = groupCharacters.find((entry) => `${entry.ownerSub}:${entry.ocid}` === characterKey);
     if (!character) return;
     stageCharacterOnParty(character, party.partyId);
     setDraggedPartyCharacter(null);
+  }
+
+  function handleGroupCanvasDragOver(event) {
+    if (!draggedPartyCharacter || !['group', 'bosses'].includes(view)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }
+
+  function dropPartyCharacterOnEmptySpace(event) {
+    if (!draggedPartyCharacter || !['group', 'bosses'].includes(view)) return;
+    if (event.target.closest?.('.group-main-party-card, .builder-party-card')) return;
+    event.preventDefault();
+    const partyId = draggedPartyCharacter.draggedFromPartyId;
+    const party = currentGroupParties.find(({ partyId: currentId }) => currentId === partyId);
+    if (party) removePartyMemberDraft(draggedPartyCharacter, party.partyId);
+    setDraggedPartyCharacter(null);
+    setDragOverPartyId('');
   }
 
   function finishPartyMemberDrag() {
@@ -1068,6 +1090,7 @@ function App() {
         characterCount: syncedCharacters.length,
         skippedCount: skippedCharacters.length,
         schedulerUnavailableCount: schedulerUnavailable.length,
+        characters: syncedCharacters,
       };
       if (!quiet) {
         setNotice({
@@ -1087,6 +1110,45 @@ function App() {
     } finally {
       if (!quiet) setBusy('');
     }
+  }
+
+  async function importCharactersAndSyncMultipliers(event) {
+    event.preventDefault();
+    if (!nexonKey.trim()) {
+      await syncCharacters(null);
+      return;
+    }
+
+    const popup = window.open('about:blank', '_blank');
+    setBusy('maplescouter-check');
+    setNotice(null);
+    setShowExtensionInstallHelp(false);
+    const extensionInstalled = await checkMapleScouterExtension();
+    setBusy('');
+    if (!extensionInstalled) {
+      popup?.close();
+      setShowExtensionInstallHelp(true);
+    }
+
+    const result = await syncCharacters(null);
+    if (!result) {
+      popup?.close();
+      return;
+    }
+    if (!extensionInstalled) {
+      setNotice({
+        type: 'error',
+        text: `캐릭터 ${result.characterCount}개와 스케줄을 불러왔습니다. 배율 동기화를 위해 MemoFam Reader 확장을 설치하고 활성화해 주세요.`,
+      });
+      return;
+    }
+
+    await refreshMapleScouterData(
+      result.characters,
+      Promise.resolve(result),
+      extensionInstalled,
+      popup,
+    );
   }
 
   async function selectGroup(groupId) {
@@ -1161,52 +1223,69 @@ function App() {
     });
   }
 
-  async function refreshMapleScouterData() {
-    const refreshCharacters = activeCharacters.slice();
+  async function refreshMapleScouterData(
+    charactersToRefresh = activeCharacters,
+    existingScheduleSyncPromise = null,
+    extensionAlreadyChecked = null,
+    existingPopup = undefined,
+  ) {
+    const refreshCharacters = charactersToRefresh.slice();
     if (!nexonKey.trim()) {
       setNotice({ type: 'error', text: '계정 설정에서 Nexon API 키를 먼저 입력해 주세요.' });
       return;
     }
-    const scheduleSyncPromise = syncCharacters(null, { quiet: true })
+    const scheduleSyncPromise = (existingScheduleSyncPromise || syncCharacters(null, { quiet: true }))
       .then((result) => ({ result }))
       .catch((error) => ({ error }));
     const scheduleSyncMessage = (outcome) => outcome.error
       ? `스케줄 동기화 실패: ${outcome.error.message || '실패'}`
       : `스케줄 ${outcome.result.characterCount}개 캐릭터 동기화 완료.`;
+    const refreshGroupData = async () => {
+      if (!selectedGroupId) return '';
+      try {
+        await loadGroupData(accessToken, selectedGroupId);
+        return '';
+      } catch (error) {
+        return ` 그룹 정보 갱신 실패: ${error.message || '실패'}`;
+      }
+    };
     if (!refreshCharacters.length) {
       setBusy('sync');
       const scheduleOutcome = await scheduleSyncPromise;
       setBusy('');
+      const groupFailure = await refreshGroupData();
       setNotice({
         type: scheduleOutcome.error ? 'error' : 'success',
-        text: scheduleSyncMessage(scheduleOutcome),
+        text: `${scheduleSyncMessage(scheduleOutcome)}${groupFailure}`,
       });
       return;
     }
-    const popup = window.open('about:blank', '_blank');
+    const popup = existingPopup === undefined ? window.open('about:blank', '_blank') : existingPopup;
     if (!popup) {
       setBusy('sync');
       const scheduleOutcome = await scheduleSyncPromise;
       setBusy('');
+      const groupFailure = await refreshGroupData();
       setNotice({
         type: 'error',
-        text: `MapleScouter 팝업이 차단됐습니다. 팝업을 허용해 주세요. ${scheduleSyncMessage(scheduleOutcome)}`,
+        text: `MapleScouter 팝업이 차단됐습니다. 팝업을 허용해 주세요. ${scheduleSyncMessage(scheduleOutcome)}${groupFailure}`,
       });
       return;
     }
 
     setBusy('maplescouter-check');
     setNotice(null);
-    setShowExtensionInstallHelp(false);
-    const extensionInstalled = await checkMapleScouterExtension();
+    if (extensionAlreadyChecked === null) setShowExtensionInstallHelp(false);
+    const extensionInstalled = extensionAlreadyChecked ?? await checkMapleScouterExtension();
     if (!extensionInstalled) {
       popup.close();
       setBusy('');
       setShowExtensionInstallHelp(true);
       const scheduleOutcome = await scheduleSyncPromise;
+      const groupFailure = await refreshGroupData();
       setNotice({
         type: 'error',
-        text: `MemoFam Reader 확장이 없거나 현재 앱 도메인에서 활성화되지 않았습니다. ${scheduleSyncMessage(scheduleOutcome)}`,
+        text: `MemoFam Reader 확장이 없거나 현재 앱 도메인에서 활성화되지 않았습니다. ${scheduleSyncMessage(scheduleOutcome)}${groupFailure}`,
       });
       return;
     }
@@ -1300,24 +1379,7 @@ function App() {
   }
 
   async function refreshGroupPartySchedules() {
-    setBusy('group-schedule-refresh');
-    setNotice(null);
-    try {
-      const result = await syncCharacters(null, { quiet: true });
-      if (!result) throw new Error('캐릭터 스케줄을 동기화하지 못했습니다.');
-      if (selectedGroupId) await loadGroupData(accessToken, selectedGroupId);
-      const unavailableNote = result.schedulerUnavailableCount
-        ? ` ${result.schedulerUnavailableCount}개 캐릭터의 스케줄 정보는 가져오지 못했습니다.`
-        : '';
-      setNotice({
-        type: result.schedulerUnavailableCount ? 'error' : 'success',
-        text: `내 계정 ${result.characterCount}개 캐릭터 스케줄을 새로고침했습니다.${unavailableNote}`,
-      });
-    } catch (error) {
-      reportError(error);
-    } finally {
-      setBusy('');
-    }
+    await refreshMapleScouterData();
   }
 
   async function openChromeExtensionSettings() {
@@ -1449,12 +1511,12 @@ function App() {
       .findIndex(({ partyId }) => partyId === focusedQuickParty.partyId) + 1
     : null;
   const partiesAcrossGroups = [
-    ...allGroupParties.filter(({ groupId }) => groupId !== selectedGroupId),
     ...currentGroupParties.map((party) => ({
       ...party,
       groupId: selectedGroupId,
       groupName: selectedGroup?.name,
     })),
+    ...allGroupParties.filter(({ groupId }) => groupId !== selectedGroupId),
   ];
   const quickPartyCandidates = groupCharacters
     .map((character) => {
@@ -1465,7 +1527,11 @@ function App() {
             ownerSub === character.ownerSub && ocid === character.ocid
           ))
         ))
-        : null;
+        : partiesAcrossGroups.find((party) => (
+          (party.members || []).some(({ ownerSub, ocid }) => (
+            ownerSub === character.ownerSub && ocid === character.ocid
+          ))
+        ));
       const characterMultipliers = multipliers.filter((entry) => (
         (!entry.ownerSub || entry.ownerSub === character.ownerSub)
         && entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
@@ -1505,6 +1571,22 @@ function App() {
       || (Number(right.level) || 0) - (Number(left.level) || 0)
       || left.nickname.localeCompare(right.nickname, 'ko')
     ));
+  const quickPartyWarningCandidates = quickPartyCandidates.filter(({ missingPartyRecommendations }) => (
+    missingPartyRecommendations.length > 0
+  ));
+  const quickPartyCharacterGroups = quickPartyCandidates
+    .filter(({ missingPartyRecommendations }) => missingPartyRecommendations.length === 0)
+    .reduce((groups, character) => {
+      const ownerEmail = character.ownerEmail?.toLocaleLowerCase('ko') || '';
+      const member = groupMembers.find(({ email }) => email.toLocaleLowerCase('ko') === ownerEmail);
+      const ownerName = character.ownerSub === account?.sub
+        ? account?.name || account?.email?.split('@')[0] || '내 캐릭터'
+        : member?.name?.trim() || character.ownerEmail?.split('@')[0] || '그룹 멤버';
+      const group = groups.find(({ key }) => key === character.ownerSub);
+      if (group) group.characters.push(character);
+      else groups.push({ key: character.ownerSub, ownerName, characters: [character] });
+      return groups;
+    }, []);
   const selectedQuickCharacter = quickPartyCandidates.find((character) => (
     `${character.ownerSub}:${character.ocid}` === selectedQuickCharacterKey
   ));
@@ -1658,110 +1740,133 @@ function App() {
       </nav>
     </aside>
   );
+  const renderQuickCharacterCard = (character) => {
+    const canManage = character.ownerSub === account?.sub || selectedGroup.role === 'admin';
+    const isAssigned = Boolean(character.assignedParty);
+    const isAssignedInCurrentGroup = character.assignedParty?.groupId === selectedGroupId;
+    const sameAccountCharacterAssigned = !isAssigned && character.sameAccountCharacterAssigned;
+    const characterKey = `${character.ownerSub}:${character.ocid}`;
+    const isSelectedForHighlights = selectedQuickCharacterKey === characterKey;
+    return (
+      <article
+        className={`group-character-quick-card ${character.missingPartyRecommendations.length ? 'has-missing-recommendations' : ''} ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
+        key={characterKey}
+        draggable={canManage && (!isAssigned || isAssignedInCurrentGroup) && !sameAccountCharacterAssigned}
+        tabIndex={0}
+        title={isSelectedForHighlights ? '선택됨 · 왼쪽에 추천 보스 표시 중' : '선택하여 왼쪽에 추천 보스 표시'}
+        onClick={() => setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey)}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return;
+          event.preventDefault();
+          setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey);
+        }}
+        onDragStart={(event) => startPartyMemberDrag(event, character, character.assignedParty)}
+        onDragEnd={finishPartyMemberDrag}
+      >
+        {canManage && isAssignedInCurrentGroup && (
+          <button
+            className="group-character-quick-remove"
+            type="button"
+            aria-label={`${character.nickname} 파티 편성 제외`}
+            title="파티 편성에서 제외"
+            onClick={(event) => {
+              event.stopPropagation();
+              removePartyMemberDraft(character, character.assignedParty.partyId);
+            }}
+          >×</button>
+        )}
+        <div className="group-character-quick-profile">
+          <span className="group-character-quick-avatar">
+            {character.image
+              ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
+              : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
+          </span>
+          <span className="group-character-quick-details">
+            <strong>{character.nickname}</strong>
+            <small>Lv. {character.level || '-'}</small>
+            {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}%</b>}
+          </span>
+          {(character.quickRecommendation || isAssigned || sameAccountCharacterAssigned) && (
+            <span className="group-character-quick-statuses">
+              {character.quickRecommendation && (
+                <strong className={`group-character-quick-recommendation ${character.quickRecommendation.recommendedPartySize ? `party-size-${character.quickRecommendation.recommendedPartySize}` : 'impossible'}`}>
+                  {character.quickRecommendation.recommendedPartySize
+                    ? recommendationPartyLabel(character.quickRecommendation.recommendedPartySize)
+                    : '불가능'}
+                </strong>
+              )}
+              {(isAssigned || sameAccountCharacterAssigned) && (
+                <em className="group-character-quick-assignment-note">편성됨</em>
+              )}
+            </span>
+          )}
+        </div>
+        {character.missingPartyRecommendations.length > 0 && (
+          <div
+            className="unassigned-party-warning group-character-quick-missing"
+            aria-label={`${character.nickname} 그룹 파티 편성 필요`}
+          >
+            <strong><span aria-hidden="true">⚠</span> 그룹 파티 편성 필요</strong>
+            {character.missingPartyRecommendations.map((boss) => (
+              <div key={boss.bossId}>
+                <button
+                  className="group-character-quick-missing-boss"
+                  type="button"
+                  aria-label={`${boss.difficultyLabel} ${boss.name} 그룹 파티 추가`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    createEmptyBossParty(boss, character);
+                  }}
+                >
+                  <span className="unassigned-party-boss">
+                    {bossImageFor(boss.bossId)
+                      ? <img src={bossImageFor(boss.bossId)} alt="" />
+                      : <span className="boss-placeholder" aria-hidden="true">◇</span>}
+                    <span>
+                      <strong>{boss.difficultyLabel} {boss.name}</strong>
+                      <small>{recommendationPartyLabel(boss.recommendedPartySize)} · 배율 {boss.multiplier.toFixed(1)}%</small>
+                    </span>
+                  </span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
+          <button
+            className="primary-button group-character-quick-add-button"
+            type="button"
+            disabled={busy === 'party-save' || !focusedQuickParty}
+            title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
+            onClick={(event) => {
+              event.stopPropagation();
+              quickAssignCharacter(character);
+            }}
+          >
+            파티에 추가
+          </button>
+        )}
+      </article>
+    );
+  };
   const groupCharacterQuickMenu = selectedGroup && (
     <aside className="group-character-quick-menu" aria-label="그룹 캐릭터 빠른 편성">
       <header>
         <p className="eyebrow">CHARACTER QUICK MENU</p>
         <h2>{selectedQuickPartyBoss ? `${selectedQuickPartyBoss.name} 배율순` : '그룹 캐릭터'}</h2>
-        <p>{selectedQuickPartyBoss ? '캐릭터를 파티 카드로 드래그해 편성하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
+        <p>{selectedQuickPartyBoss ? '파티 카드로 드래그해 편성하고, 퀵메뉴나 빈 공간에 놓아 제외하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
       </header>
       <div className="group-character-quick-list">
-        {quickPartyCandidates.length ? quickPartyCandidates.map((character) => {
-          const canManage = character.ownerSub === account?.sub || selectedGroup.role === 'admin';
-          const isAssigned = Boolean(character.assignedParty);
-          const sameAccountCharacterAssigned = !isAssigned && character.sameAccountCharacterAssigned;
-          const characterKey = `${character.ownerSub}:${character.ocid}`;
-          const isSelectedForHighlights = selectedQuickCharacterKey === characterKey;
-          return (
-            <article
-              className={`group-character-quick-card ${character.missingPartyRecommendations.length ? 'has-missing-recommendations' : ''} ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
-              key={characterKey}
-              draggable={canManage && !isAssigned && !sameAccountCharacterAssigned}
-              tabIndex={0}
-              title={isSelectedForHighlights ? '선택됨 · 왼쪽에 추천 보스 표시 중' : '선택하여 왼쪽에 추천 보스 표시'}
-              onClick={() => setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey)}
-              onKeyDown={(event) => {
-                if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return;
-                event.preventDefault();
-                setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey);
-              }}
-              onDragStart={(event) => startPartyMemberDrag(event, character)}
-              onDragEnd={finishPartyMemberDrag}
-            >
-              <div className="group-character-quick-profile">
-                <span className="group-character-quick-avatar">
-                  {character.image
-                    ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
-                    : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
-                </span>
-                <span className="group-character-quick-details">
-                  <strong>{character.nickname}</strong>
-                  <small>Lv. {character.level || '-'}</small>
-                  {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}%</b>}
-                </span>
-                {(character.quickRecommendation || isAssigned || sameAccountCharacterAssigned) && (
-                  <span className="group-character-quick-statuses">
-                  {character.quickRecommendation && (
-                    <strong className={`group-character-quick-recommendation ${character.quickRecommendation.recommendedPartySize ? `party-size-${character.quickRecommendation.recommendedPartySize}` : 'impossible'}`}>
-                      {character.quickRecommendation.recommendedPartySize
-                        ? recommendationPartyLabel(character.quickRecommendation.recommendedPartySize)
-                        : '불가능'}
-                    </strong>
-                  )}
-                    {(isAssigned || sameAccountCharacterAssigned) && (
-                      <em className="group-character-quick-assignment-note">편성됨</em>
-                    )}
-                  </span>
-                )}
-              </div>
-              {character.missingPartyRecommendations.length > 0 && (
-                <div
-                  className="unassigned-party-warning group-character-quick-missing"
-                  aria-label={`${character.nickname} 그룹 파티 편성 필요`}
-                >
-                  <strong><span aria-hidden="true">⚠</span> 그룹 파티 편성 필요</strong>
-                  {character.missingPartyRecommendations.map((boss) => (
-                    <div key={boss.bossId}>
-                      <button
-                        className="group-character-quick-missing-boss"
-                        type="button"
-                        aria-label={`${boss.difficultyLabel} ${boss.name} 그룹 파티 추가`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          createEmptyBossParty(boss, character);
-                        }}
-                      >
-                        <span className="unassigned-party-boss">
-                          {bossImageFor(boss.bossId)
-                            ? <img src={bossImageFor(boss.bossId)} alt="" />
-                            : <span className="boss-placeholder" aria-hidden="true">◇</span>}
-                          <span>
-                            <strong>{boss.difficultyLabel} {boss.name}</strong>
-                            <small>{recommendationPartyLabel(boss.recommendedPartySize)} · 배율 {boss.multiplier.toFixed(1)}%</small>
-                          </span>
-                        </span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
-                <button
-                  className="primary-button group-character-quick-add-button"
-                  type="button"
-                  disabled={busy === 'party-save' || !focusedQuickParty}
-                  title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    quickAssignCharacter(character);
-                  }}
-                >
-                  파티에 추가
-                </button>
-              )}
-            </article>
-          );
-        }) : (
+        {quickPartyWarningCandidates.map(renderQuickCharacterCard)}
+        {quickPartyCharacterGroups.map(({ key, ownerName, characters: ownerCharacters }) => (
+          <section className="group-character-owner-group" key={key} aria-label={`${ownerName} 캐릭터`}>
+            <h3>{ownerName}</h3>
+            <div className="group-character-owner-grid">
+              {ownerCharacters.map(renderQuickCharacterCard)}
+            </div>
+          </section>
+        ))}
+        {!quickPartyCandidates.length && (
           <div className="empty-state compact">
             <strong>{groupCharacters.length ? '표시할 캐릭터가 없습니다' : '그룹에 참여된 캐릭터가 없습니다'}</strong>
             <p>{selectedQuickPartyBoss ? '이 보스에 편성할 수 있는 캐릭터가 없습니다.' : '그룹에 참여된 캐릭터가 여기에 표시됩니다.'}</p>
@@ -1772,7 +1877,12 @@ function App() {
   );
 
   return (
-    <div className="app-shell" data-theme={theme}>
+    <div
+      className={`app-shell ${draggedPartyCharacter && ['group', 'bosses'].includes(view) ? 'party-character-drag-active' : ''}`}
+      data-theme={theme}
+      onDragOver={handleGroupCanvasDragOver}
+      onDrop={dropPartyCharacterOnEmptySpace}
+    >
       <aside className="server-rail" aria-label="내 정보와 그룹">
         <button
           className={`rail-button my-info-button ${view === 'characters' ? 'active' : ''}`}
@@ -1875,7 +1985,7 @@ function App() {
           </div>
 
           {notice && <div className={`notice ${notice.type}`} role="status">{notice.text}</div>}
-          {showExtensionInstallHelp && (
+          {showExtensionInstallHelp && (view === 'characters' || view === 'settings') && (
             <section className="extension-install-help" role="alert" aria-labelledby="extension-install-title">
               <div className="extension-install-heading">
                 <h2 id="extension-install-title">MemoFam Reader 설치</h2>
@@ -1933,7 +2043,7 @@ function App() {
                         <p>API 키를 입력해 260레벨 이상 캐릭터와 스케줄 정보를 불러옵니다.</p>
                       </div>
                     </div>
-                    <form className="sync-form" onSubmit={syncCharacters}>
+                    <form className="sync-form" onSubmit={importCharactersAndSyncMultipliers}>
                       <label className="sr-only" htmlFor="nexon-api-key">Nexon Open API 키</label>
                       <div className="api-key-field">
                         <input
@@ -1950,8 +2060,8 @@ function App() {
                           <span>API 키 유지</span>
                         </label>
                       </div>
-                      <button className="primary-button" type="submit" disabled={busy === 'sync'}>
-                        {busy === 'sync' ? '캐릭터 불러오는 중...' : '캐릭터 불러오기'}
+                      <button className="primary-button" type="submit" disabled={busy === 'sync' || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}>
+                        {busy === 'maplescouter-check' ? '확장 확인 중...' : busy === 'sync' ? '캐릭터 불러오는 중...' : busy === 'maplescouter-refresh' ? '배율 동기화 중...' : '캐릭터 불러오기'}
                       </button>
                     </form>
                     <div className="sync-footer">
@@ -2033,7 +2143,7 @@ function App() {
                         <button
                           className={`outline-button character-score-refresh ${busy === 'maplescouter-refresh' ? 'refreshing' : ''}`}
                           type="button"
-                          onClick={refreshMapleScouterData}
+                          onClick={() => refreshMapleScouterData()}
                           disabled={!activeCharacters.length || busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}
                           aria-label={mapleScouterButtonLabel}
                           title={mapleScouterButtonLabel}
@@ -2042,6 +2152,7 @@ function App() {
                             <path d="M20 7v5h-5M4 17v-5h5" />
                             <path d="M5.7 9A7 7 0 0 1 18 6.2L20 12M4 12l2 5.8A7 7 0 0 0 18.3 15" />
                           </svg>
+                          <span>{busy === 'maplescouter-refresh' ? '동기화 중' : '배율 동기화'}</span>
                         </button>
                       </div>
                     </div>
@@ -2267,18 +2378,18 @@ function App() {
                             <div>
                               <span>{currentGroupParties.length}개</span>
                               <button
-                                className={`outline-button group-party-schedule-refresh ${busy === 'group-schedule-refresh' ? 'refreshing' : ''}`}
+                                className={`outline-button group-party-schedule-refresh ${busy === 'maplescouter-refresh' ? 'refreshing' : ''}`}
                                 type="button"
                                 onClick={refreshGroupPartySchedules}
-                                disabled={busy === 'group-schedule-refresh'}
-                                aria-label="내 캐릭터 스케줄 새로고침"
-                                title="내 계정 캐릭터 스케줄을 불러와 클리어 여부를 갱신"
+                                disabled={busy === 'maplescouter-check' || busy === 'maplescouter-refresh'}
+                                aria-label="내 캐릭터 배율 및 스케줄 동기화"
+                                title="배율과 내 계정 캐릭터 스케줄을 함께 동기화"
                               >
                                 <svg aria-hidden="true" viewBox="0 0 24 24">
                                   <path d="M20 7v5h-5M4 17v-5h5" />
                                   <path d="M5.7 9A7 7 0 0 1 18 6.2L20 12M4 12l2 5.8A7 7 0 0 0 18.3 15" />
                                 </svg>
-                                <span>{busy === 'group-schedule-refresh' ? '새로고침 중' : '스케줄 새로고침'}</span>
+                                <span>{busy === 'maplescouter-check' || busy === 'maplescouter-refresh' ? '동기화 중' : '배율 동기화'}</span>
                               </button>
                               {partyDraft?.groupId === selectedGroupId && (
                                 <>

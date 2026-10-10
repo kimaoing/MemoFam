@@ -106,8 +106,9 @@ button:disabled { cursor: wait; opacity: .65; }
 .character-filter-bar select { height: 40px; min-width: 0; padding: 0 12px; border: 1px solid #dfe2e9; border-radius: 5px; outline: none; background: #fff; color: #303545; font-size: 14px; }
 .character-filter-bar select { min-width: 145px; }
 .character-filter-bar select:focus { border-color: #8495e1; box-shadow: 0 0 0 3px rgba(101, 121, 214, .12); }
-.character-score-refresh { display: grid; width: 36px; height: 36px; min-height: 36px; place-items: center; padding: 0; }
+.character-score-refresh { display: inline-flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 11px; white-space: nowrap; }
 .character-score-refresh svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.character-score-refresh span { font-size: 12px; font-weight: 650; }
 .character-score-refresh.refreshing svg { animation: refresh-spin .9s linear infinite; }
 @keyframes refresh-spin { to { transform: rotate(360deg); } }
 .character-settings-section { margin-top: 32px; }
@@ -405,15 +406,30 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-quick-party-editor-heading p:last-child { margin: 0; color: #7a8190; font-size: 13px; line-height: 1.5; }
 .group-quick-party-editor-heading > img { width: 52px; height: 52px; object-fit: contain; }
 .group-quick-party-editor .group-quick-roster { margin-top: 0; }
-.group-character-quick-menu { position: sticky; top: 0; display: flex; width: 350px; height: 100vh; max-height: 100vh; flex: 0 0 350px; flex-direction: column; gap: 10px; overflow: hidden; padding: 14px; border-left: 1px solid #dfe3ec; background: #fff; }
+.group-character-quick-menu { position: sticky; top: 0; display: flex; width: 390px; height: 100vh; max-height: 100vh; flex: 0 0 390px; flex-direction: column; gap: 10px; overflow: hidden; padding: 14px; border-left: 1px solid #dfe3ec; background: #fff; }
 .group-character-quick-menu > header { flex: 0 0 auto; padding-bottom: 10px; border-bottom: 1px solid #e5e8ef; }
 .group-character-quick-menu > header h2 { margin: 3px 0; color: #303647; font-size: 19px; }
 .group-character-quick-menu > header p:last-child { margin: 0; color: #778096; font-size: 14px; line-height: 1.45; }
 .group-character-quick-list { display: grid; min-height: 0; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 8px; overflow-x: hidden; overflow-y: auto; padding-right: 3px; }
-.group-character-quick-card { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 7px; padding: 8px; border: 1px solid #d7ddeb; border-radius: 9px; background: #fbfcfe; cursor: grab; }
+.group-character-owner-group { min-width: 0; }
+.group-character-owner-group > h3 { margin: 5px 0 6px; color: #50586b; font-size: 13px; font-weight: 800; }
+.group-character-owner-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 6px; }
+.group-character-quick-card { position: relative; display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 7px; padding: 8px; border: 1px solid #d7ddeb; border-radius: 9px; background: #fbfcfe; cursor: grab; }
 .group-character-quick-card.has-missing-recommendations { grid-template-columns: minmax(116px, .9fr) minmax(0, 1.1fr); align-items: center; }
 .group-character-quick-profile { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: start; gap: 5px; }
 .group-character-quick-card.selected-for-boss-highlights { border-color: #d89a18; box-shadow: 0 0 0 2px rgba(216, 154, 24, .25); }
+.group-character-quick-remove { position: absolute; z-index: 1; top: 4px; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 1px solid #dcaeb2; border-radius: 5px; background: #fff0f0; color: #a54c55; font-size: 16px; line-height: 1; cursor: pointer; }
+.group-character-quick-remove:hover { border-color: #c96e77; background: #ffe4e5; }
+.group-character-owner-grid .group-character-quick-card { padding: 8px 4px 6px; }
+.group-character-owner-grid .group-character-quick-profile { gap: 4px; }
+.group-character-owner-grid .group-character-quick-avatar { width: 56px; height: 56px; }
+.group-character-owner-grid .group-character-quick-details > strong { max-width: 100%; font-size: 12px; }
+.group-character-owner-grid .group-character-quick-details > small { font-size: 11px; }
+.group-character-owner-grid .group-character-quick-details > b { font-size: 12px; }
+.group-character-owner-grid .group-character-quick-statuses { flex-wrap: wrap; white-space: normal; }
+.group-character-owner-grid .group-character-quick-statuses > .group-character-quick-recommendation,
+.group-character-owner-grid .group-character-quick-assignment-note { font-size: 9px; }
+.group-character-owner-grid .group-character-quick-add-button { min-width: 0; width: 100%; min-height: 28px; padding: 0 3px; font-size: 10px; }
 .group-character-quick-avatar { display: grid; width: 72px; height: 72px; justify-self: center; overflow: hidden; place-items: center; border: 1px solid transparent; border-radius: 8px; background: inherit; }
 .group-character-quick-avatar > img { width: 100%; height: 100%; object-fit: contain; transform: scale(2.15); }
 .group-character-quick-fallback { color: #5266b7; font-size: 28px; font-weight: 750; }
@@ -940,6 +956,8 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .group-settings-card,
 .app-shell[data-theme='dark'] .group-quick-party-editor { border-color: #343847; background: #20232e; }
 .app-shell[data-theme='dark'] .group-character-quick-menu { border-color: #343847; background: #20232e; }
+.app-shell[data-theme='dark'] .group-character-owner-group > h3 { color: #d4d7e2; }
+.app-shell[data-theme='dark'] .group-character-quick-remove { border-color: #74474e; background: #38262b; color: #ffb7bf; }
 .app-shell[data-theme='dark'] .group-character-quick-menu > header { border-color: #343847; }
 .app-shell[data-theme='dark'] .group-character-quick-menu > header h2,
 .app-shell[data-theme='dark'] .group-character-quick-details > strong { color: #e4e6ef; }

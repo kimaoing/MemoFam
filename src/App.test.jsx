@@ -175,18 +175,20 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   }));
   const mapleScouterPopup = { location: { href: '' }, close: vi.fn() };
   const extensionChecks = [];
+  const extensionStatusOverrides = [];
   vi.spyOn(window, 'open').mockReturnValue(mapleScouterPopup);
   vi.spyOn(window, 'postMessage').mockImplementation((message) => {
     if (message.type !== 'maple-scout/extension-check') return;
     extensionChecks.push(message);
-    if (extensionChecks.length > 1) {
+    const statusOverride = extensionStatusOverrides.shift();
+    if (statusOverride !== undefined || extensionChecks.length > 1) {
       window.dispatchEvent(new MessageEvent('message', {
         origin: window.location.origin,
         source: window,
         data: {
           type: 'maple-scout/extension-status',
           requestId: message.requestId,
-          installed: true,
+          installed: statusOverride ?? true,
         },
       }));
     }
@@ -436,8 +438,35 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(screen.queryByLabelText(/캐릭터 닉네임/)).toBeNull();
 
   fireEvent.change(screen.getByLabelText('Nexon Open API 키'), { target: { value: 'test-nexon-key' } });
+  extensionStatusOverrides.push(true);
   fireEvent.click(screen.getByRole('button', { name: '캐릭터 불러오기' }));
   await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('4개 캐릭터 정보를 동기화했습니다.'));
+  let previousMapleScouterUrl = '';
+  for (let index = 0; index < syncedCharacters.length; index += 1) {
+    await waitFor(() => {
+      expect(mapleScouterPopup.location.href).toContain('/ko/result?name=');
+      expect(mapleScouterPopup.location.href).not.toBe(previousMapleScouterUrl);
+    });
+    previousMapleScouterUrl = mapleScouterPopup.location.href;
+    const nickname = new URL(previousMapleScouterUrl).searchParams.get('name');
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://maplescouter.com',
+      source: mapleScouterPopup,
+      data: {
+        type: 'maple-scout/maplescouter-import',
+        payload: {
+          nickname,
+          boss380HexaScore: syncedCharacters.find((character) => character.nickname === nickname).boss380HexaScore,
+          multipliers: [{ bossId: 'normal_kaling', multiplier: 26.5 }],
+        },
+      },
+    }));
+  }
+  await screen.findByText(/실사용 캐릭터 4\/4명 동기화 완료/);
+  const importCountAfterCharacterLoad = workerCalls.filter(({ method, path }) => (
+    method === 'POST' && path === '/api/characters/maplescouter-import'
+  )).length;
+  expect(importCountAfterCharacterLoad).toBe(4);
   expect(screen.queryByText(/숨길캐릭터/)).toBeNull();
   expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' })).toBeDefined();
   expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' })).toBeDefined();
@@ -636,8 +665,30 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(assignedQuickCharacterCards.every((card) => (
     card.querySelector('.group-character-quick-assignment-note').textContent === '편성됨'
   ))).toBe(true);
-  expect(quickCharacterCards.indexOf(assignedQuickCharacterCards[0]))
-    .toBeGreaterThan(quickCharacterCards.findIndex((card) => !card.classList.contains('already-assigned')));
+  const groupedQuickCards = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-grid .group-character-quick-card')];
+  expect(groupedQuickCards.length).toBeGreaterThan(0);
+  expect(groupedQuickCards.every((card) => !card.querySelector('.group-character-quick-missing'))).toBe(true);
+  const ownAssignedQuickCard = quickCharacterCards.find((card) => (
+    card.querySelector('.group-character-quick-details > strong').textContent === '오잉느'
+  ));
+  expect(ownAssignedQuickCard.draggable).toBe(true);
+  const removeOwnAssignmentButton = within(ownAssignedQuickCard)
+    .getByRole('button', { name: '오잉느 파티 편성 제외' });
+  fireEvent.click(removeOwnAssignmentButton);
+  expect(screen.getByRole('status').textContent).toContain('편성 변경을 임시 저장했습니다');
+  fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
+  const assignedQuickCardForMenuDrop = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
+    .find((card) => card.querySelector('.group-character-quick-details > strong').textContent === '오잉느');
+  fireEvent.dragStart(assignedQuickCardForMenuDrop, { dataTransfer: dragData });
+  fireEvent.drop(groupCharacterQuickMenu, { dataTransfer: dragData });
+  expect(screen.getByRole('status').textContent).toContain('편성 변경을 임시 저장했습니다');
+  fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
+  const assignedQuickCardForBlankDrop = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
+    .find((card) => card.querySelector('.group-character-quick-details > strong').textContent === '오잉느');
+  fireEvent.dragStart(assignedQuickCardForBlankDrop, { dataTransfer: dragData });
+  fireEvent.drop(document.querySelector('.group-main-party-overview-heading'), { dataTransfer: dragData });
+  expect(screen.getByRole('status').textContent).toContain('편성 변경을 임시 저장했습니다');
+  fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
   const sameAccountCharacterCard = quickCharacterCards.find((card) => (
     card.querySelector('.group-character-quick-details > strong').textContent === '아잉느'
   ));
@@ -789,6 +840,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
 
   fireEvent.click(screen.getByTitle('내 정보'));
+  extensionStatusOverrides.push(false);
   fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));
   expect(window.open).toHaveBeenNthCalledWith(1, 'about:blank', '_blank');
   await waitFor(() => expect(workerCalls.filter(({ method, path }) => (
@@ -802,13 +854,14 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(extensionDownload.hasAttribute('download')).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Chrome 확장 프로그램 열기' }));
   expect(await screen.findByText(/브라우저 보안 정책상 웹페이지에서 확장 프로그램 페이지를 직접 열 수 없습니다/)).toBeDefined();
-  expect(mapleScouterPopup.close).toHaveBeenCalledOnce();
+  expect(mapleScouterPopup.close).toHaveBeenCalledTimes(2);
 
   await act(async () => {
+    extensionStatusOverrides.push(true);
     fireEvent.click(screen.getByRole('button', { name: '실사용 2명 전체 갱신' }));
     await Promise.resolve();
   });
-  expect(window.open).toHaveBeenNthCalledWith(2, 'about:blank', '_blank');
+  expect(window.open).toHaveBeenNthCalledWith(3, 'about:blank', '_blank');
   await waitFor(() => expect(mapleScouterPopup.location.href)
     .toBe('https://maplescouter.com/ko/result?name=%EC%98%A4%EC%9E%89%EB%8A%90'));
   window.dispatchEvent(new MessageEvent('message', {
@@ -823,7 +876,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       },
     },
   }));
-  expect(workerCalls.some(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import')).toBe(false);
+  expect(workerCalls.filter(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import'))
+    .toHaveLength(importCountAfterCharacterLoad);
   window.dispatchEvent(new MessageEvent('message', {
     origin: 'https://maplescouter.com',
     source: mapleScouterPopup,
@@ -853,9 +907,9 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const refreshNotice = await screen.findByText(/실사용 캐릭터 2\/2명 동기화 완료/);
   expect(refreshNotice.textContent).toContain('스케줄 4개 캐릭터 동기화 완료');
   expect(screen.queryByLabelText('북마클릿 주소')).toBeNull();
-  expect(mapleScouterPopup.close).toHaveBeenCalledTimes(2);
+  expect(mapleScouterPopup.close).toHaveBeenCalledTimes(3);
 
-  const importCalls = workerCalls.filter(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import');
+  const importCalls = workerCalls.filter(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-import').slice(-2);
   expect(importCalls.map(({ request }) => request)).toEqual([
     { nickname: '오잉느', boss380HexaScore: 67619, multipliers: [{ bossId: 'normal_kaling', multiplier: 26.5 }] },
     { nickname: '아잉느', boss380HexaScore: 70000, multipliers: [{ bossId: 'normal_kaling', multiplier: 25.5 }] },
@@ -871,8 +925,9 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   includeNormalKalingParty = true;
   fireEvent.click(screen.getByTitle('Test group'));
   await screen.findByRole('heading', { name: '파티 빠른 편성' });
-  fireEvent.click(screen.getByRole('button', { name: '내 캐릭터 스케줄 새로고침' }));
-  await screen.findByText(/내 계정 4개 캐릭터 스케줄을 새로고침했습니다/);
+  extensionStatusOverrides.push(false);
+  fireEvent.click(screen.getByRole('button', { name: '내 캐릭터 배율 및 스케줄 동기화' }));
+  await screen.findByText(/스케줄 4개 캐릭터 동기화 완료/);
   const normalKalingParty = [...document.querySelectorAll('.group-main-party-card')]
     .find((card) => card.id === 'group-party-party-normal-kaling');
   expect(normalKalingParty.classList.contains('boss-cleared')).toBe(true);

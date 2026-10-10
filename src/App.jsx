@@ -1647,6 +1647,9 @@ function App() {
                   <strong>{character.nickname}</strong>
                   <small>Lv. {character.level || '-'}</small>
                   {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}%</b>}
+                </span>
+                {(character.quickRecommendation || isAssigned || sameAccountCharacterAssigned) && (
+                  <span className="group-character-quick-statuses">
                   {character.quickRecommendation && (
                     <strong className={`group-character-quick-recommendation ${character.quickRecommendation.recommendedPartySize ? `party-size-${character.quickRecommendation.recommendedPartySize}` : 'impossible'}`}>
                       {character.quickRecommendation.recommendedPartySize
@@ -1654,7 +1657,11 @@ function App() {
                         : '불가능'}
                     </strong>
                   )}
-                </span>
+                    {(isAssigned || sameAccountCharacterAssigned) && (
+                      <em className="group-character-quick-assignment-note">편성됨</em>
+                    )}
+                  </span>
+                )}
                 {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
                   <button
                     className="primary-button"
@@ -1665,18 +1672,6 @@ function App() {
                   >
                     파티에 추가
                   </button>
-                )}
-                {isAssigned && (
-                  <em className="group-character-quick-assignment-note">
-                    {character.assignedParty.groupId === selectedGroupId
-                      ? '편성됨'
-                      : '편성됨'}
-                  </em>
-                )}
-                {sameAccountCharacterAssigned && (
-                  <em className="group-character-quick-assignment-note">
-                    편성됨
-                  </em>
                 )}
               </div>
               {character.missingPartyRecommendations.length > 0 && (

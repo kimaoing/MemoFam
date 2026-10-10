@@ -639,7 +639,11 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const sameAccountCharacterCard = quickCharacterCards.find((card) => (
     card.querySelector('.group-character-quick-details > strong').textContent === '아잉느'
   ));
-  expect(sameAccountCharacterCard.querySelector('.group-character-quick-assignment-note').textContent).toBe('편성됨');
+  const sameAccountStatusRow = sameAccountCharacterCard.querySelector('.group-character-quick-statuses');
+  expect(sameAccountStatusRow).not.toBeNull();
+  expect(sameAccountStatusRow.querySelector('.group-character-quick-recommendation')).not.toBeNull();
+  expect(sameAccountStatusRow.querySelector('.group-character-quick-assignment-note').textContent).toBe('편성됨');
+  expect(sameAccountStatusRow.children).toHaveLength(2);
   expect(sameAccountCharacterCard.querySelector('button')).toBeNull();
   await waitFor(() => expect([...document.querySelectorAll('.group-main-party-card')]
     .some((card) => card.textContent.includes('오잉느') && card.querySelector('.party-summary strong'))).toBe(true));

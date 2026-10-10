@@ -740,7 +740,11 @@ function App() {
     }
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', `${character.ownerSub}:${character.ocid}`);
-    setDraggedPartyCharacter({ ...character, draggedFromPartyId: assignedParty?.groupId === selectedGroupId ? assignedParty.partyId : '' });
+    const draggedFromPartyId = assignedParty
+      && (!assignedParty.groupId || assignedParty.groupId === selectedGroupId)
+      ? assignedParty.partyId
+      : '';
+    setDraggedPartyCharacter({ ...character, draggedFromPartyId });
   }
 
   function dragOverParty(event, party) {
@@ -754,7 +758,11 @@ function App() {
     setDragOverPartyId('');
     setActiveBuilderPartyId(party.partyId);
     const characterKey = event.dataTransfer.getData('text/plain');
-    const character = groupCharacters.find((entry) => `${entry.ownerSub}:${entry.ocid}` === characterKey);
+    const character = groupCharacters.find((entry) => `${entry.ownerSub}:${entry.ocid}` === characterKey)
+      || (draggedPartyCharacter
+        && `${draggedPartyCharacter.ownerSub}:${draggedPartyCharacter.ocid}` === characterKey
+        ? draggedPartyCharacter
+        : null);
     if (!character) return;
     stageCharacterOnParty(character, party.partyId);
     setDraggedPartyCharacter(null);
@@ -1727,7 +1735,6 @@ function App() {
   const renderQuickCharacterCard = (character) => {
     const canManage = character.ownerSub === account?.sub || selectedGroup.role === 'admin';
     const isAssigned = Boolean(character.assignedParty);
-    const isAssignedInCurrentGroup = character.assignedParty?.groupId === selectedGroupId;
     const sameAccountCharacterAssigned = !isAssigned && character.sameAccountCharacterAssigned;
     const characterKey = `${character.ownerSub}:${character.ocid}`;
     const isSelectedForHighlights = selectedQuickCharacterKey === characterKey;
@@ -1735,7 +1742,7 @@ function App() {
       <article
         className={`group-character-quick-card ${character.missingPartyRecommendations.length ? 'has-missing-recommendations' : ''} ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
         key={characterKey}
-        draggable={canManage && (!isAssigned || isAssignedInCurrentGroup) && !sameAccountCharacterAssigned}
+        draggable={canManage && !isAssigned && !sameAccountCharacterAssigned}
         tabIndex={0}
         title={isSelectedForHighlights ? '선택됨 · 왼쪽에 추천 보스 표시 중' : '선택하여 왼쪽에 추천 보스 표시'}
         onClick={() => setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey)}
@@ -1744,21 +1751,9 @@ function App() {
           event.preventDefault();
           setSelectedQuickCharacterKey((current) => current === characterKey ? '' : characterKey);
         }}
-        onDragStart={(event) => startPartyMemberDrag(event, character, character.assignedParty)}
+        onDragStart={(event) => startPartyMemberDrag(event, character)}
         onDragEnd={finishPartyMemberDrag}
       >
-        {canManage && isAssignedInCurrentGroup && (
-          <button
-            className="group-character-quick-remove"
-            type="button"
-            aria-label={`${character.nickname} 파티 편성 제외`}
-            title="파티 편성에서 제외"
-            onClick={(event) => {
-              event.stopPropagation();
-              removePartyMemberDraft(character, character.assignedParty.partyId);
-            }}
-          >×</button>
-        )}
         <div className="group-character-quick-profile">
           <span className="group-character-quick-avatar">
             {character.image
@@ -1830,38 +1825,9 @@ function App() {
         {quickPartyCharacterGroups.map(({ key, ownerName, characters: ownerCharacters }) => (
           <section className="group-character-owner-group" key={key} aria-label={`${ownerName} 캐릭터`}>
             <h3>{ownerName}</h3>
-            {ownerCharacters
-              .filter(({ assignedParty, missingPartyRecommendations }) => (
-                !assignedParty && missingPartyRecommendations.length > 0
-              ))
-              .map(renderQuickCharacterCard)}
-            {ownerCharacters.some(({ assignedParty, missingPartyRecommendations }) => (
-              !assignedParty && missingPartyRecommendations.length === 0
-            )) && (
-              <div className="group-character-owner-grid">
-                {ownerCharacters
-                  .filter(({ assignedParty, missingPartyRecommendations }) => (
-                    !assignedParty && missingPartyRecommendations.length === 0
-                  ))
-                  .map(renderQuickCharacterCard)}
-              </div>
-            )}
-            {ownerCharacters
-              .filter(({ assignedParty, missingPartyRecommendations }) => (
-                assignedParty && missingPartyRecommendations.length > 0
-              ))
-              .map(renderQuickCharacterCard)}
-            {ownerCharacters.some(({ assignedParty, missingPartyRecommendations }) => (
-              assignedParty && missingPartyRecommendations.length === 0
-            )) && (
-              <div className="group-character-owner-grid">
-                {ownerCharacters
-                  .filter(({ assignedParty, missingPartyRecommendations }) => (
-                    assignedParty && missingPartyRecommendations.length === 0
-                  ))
-                  .map(renderQuickCharacterCard)}
-              </div>
-            )}
+            <div className="group-character-owner-grid">
+              {ownerCharacters.map(renderQuickCharacterCard)}
+            </div>
           </section>
         ))}
         {!quickPartyCandidates.length && (
@@ -2531,16 +2497,33 @@ function App() {
                                       )}
                                     </header>
                                     <div className="group-main-party-members">
-                                      {members.length ? members.map((member) => (
-                                        <span
-                                          className={`party-overview-member ${member.ownerSub === account?.sub ? 'own' : ''}`}
-                                          key={`${member.ownerSub}:${member.ocid}`}
-                                          title={`${member.nickname} · ${Number(member.multiplier || 0).toFixed(1)}%`}
-                                        >
-                                          <span>{member.nickname}</span>
-                                          <small>{Number(member.multiplier || 0).toFixed(1)}%</small>
-                                        </span>
-                                      )) : (
+                                      {members.length ? members.map((member) => {
+                                        const canManageMember = member.ownerSub === account?.sub || selectedGroup.role === 'admin';
+                                        return (
+                                          <span
+                                            className={`party-overview-member ${member.ownerSub === account?.sub ? 'own' : ''}`}
+                                            key={`${member.ownerSub}:${member.ocid}`}
+                                            title={`${member.nickname} · ${Number(member.multiplier || 0).toFixed(1)}%`}
+                                            draggable={canManageMember}
+                                            onDragStart={(event) => startPartyMemberDrag(event, member, party)}
+                                            onDragEnd={finishPartyMemberDrag}
+                                          >
+                                            <span>{member.nickname}</span>
+                                            <small>{Number(member.multiplier || 0).toFixed(1)}%</small>
+                                            {canManageMember && (
+                                              <button
+                                                type="button"
+                                                aria-label={`${member.nickname} 파티 편성 제외`}
+                                                title="파티 편성에서 제외"
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  removePartyMemberDraft(member, party.partyId);
+                                                }}
+                                              >×</button>
+                                            )}
+                                          </span>
+                                        );
+                                      }) : (
                                         <span className="group-main-party-empty">빈 파티 · 캐릭터를 끌어 놓아 추가</span>
                                       )}
                                     </div>

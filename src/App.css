@@ -416,10 +416,9 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-character-owner-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 6px; }
 .group-character-quick-card { position: relative; display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 7px; padding: 8px; border: 1px solid #d7ddeb; border-radius: 9px; background: #fbfcfe; cursor: grab; }
 .group-character-quick-card.has-missing-recommendations { grid-template-columns: minmax(116px, .9fr) minmax(0, 1.1fr); align-items: center; }
+.group-character-owner-grid .group-character-quick-card.has-missing-recommendations { grid-template-columns: minmax(0, 1fr); align-items: start; }
 .group-character-quick-profile { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: start; gap: 5px; }
 .group-character-quick-card.selected-for-boss-highlights { border-color: #d89a18; box-shadow: 0 0 0 2px rgba(216, 154, 24, .25); }
-.group-character-quick-remove { position: absolute; z-index: 1; top: 4px; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 1px solid #dcaeb2; border-radius: 5px; background: #fff0f0; color: #a54c55; font-size: 16px; line-height: 1; cursor: pointer; }
-.group-character-quick-remove:hover { border-color: #c96e77; background: #ffe4e5; }
 .group-character-owner-grid .group-character-quick-card { padding: 8px 4px 6px; }
 .group-character-owner-grid .group-character-quick-profile { gap: 4px; }
 .group-character-owner-grid .group-character-quick-avatar { width: 56px; height: 56px; }
@@ -485,9 +484,11 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-main-party-card > header > b { flex: 0 0 auto; color: #6579ce; font-size: 10px; }
 .group-main-party-card .party-remove-button { width: 19px; height: 19px; flex: 0 0 19px; border-radius: 5px; font-size: 15px; }
 .group-main-party-members { display: flex; min-height: 0; flex-wrap: wrap; align-items: center; gap: 4px; padding: 5px 0; }
-.party-overview-member { display: inline-flex; max-width: 100%; align-items: center; gap: 4px; overflow: hidden; padding: 3px 6px; border-radius: 999px; background: #f0f2f7; color: #555d70; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.party-overview-member { display: inline-flex; max-width: 100%; align-items: center; gap: 4px; overflow: hidden; padding: 3px 6px; border-radius: 999px; background: #f0f2f7; color: #555d70; font-size: 10px; font-weight: 700; white-space: nowrap; cursor: grab; }
 .party-overview-member > span { overflow: hidden; text-overflow: ellipsis; }
 .party-overview-member > small { flex: 0 0 auto; color: #398457; font-size: 10px; font-weight: 800; }
+.party-overview-member > button { display: grid; width: 14px; height: 14px; flex: 0 0 14px; place-items: center; padding: 0; border: 1px solid #dcaeb2; border-radius: 4px; background: #fff0f0; color: #a54c55; font-size: 11px; line-height: 1; cursor: pointer; }
+.party-overview-member > button:hover { border-color: #c96e77; background: #ffe4e5; }
 .party-overview-member.own { background: #e8ecff; color: #4e61b4; }
 .group-main-party-card .group-main-party-empty { padding: 3px 5px; border-radius: 5px; font-size: 10px; }
 .group-main-party-card .party-summary { display: flex; align-items: center; gap: 6px; margin-top: 0; padding-top: 5px; font-size: 10px; }
@@ -955,7 +956,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .app-shell[data-theme='dark'] .group-quick-party-editor { border-color: #343847; background: #20232e; }
 .app-shell[data-theme='dark'] .group-character-quick-menu { border-color: #343847; background: #20232e; }
 .app-shell[data-theme='dark'] .group-character-owner-group > h3 { color: #d4d7e2; }
-.app-shell[data-theme='dark'] .group-character-quick-remove { border-color: #74474e; background: #38262b; color: #ffb7bf; }
+.app-shell[data-theme='dark'] .party-overview-member > button { border-color: #74474e; background: #38262b; color: #ffb7bf; }
 .app-shell[data-theme='dark'] .group-character-quick-menu > header { border-color: #343847; }
 .app-shell[data-theme='dark'] .group-character-quick-menu > header h2,
 .app-shell[data-theme='dark'] .group-character-quick-details > strong { color: #e4e6ef; }

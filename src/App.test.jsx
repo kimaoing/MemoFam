@@ -667,8 +667,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     card.querySelector('.group-character-quick-assignment-note').textContent === '편성됨'
   ))).toBe(true);
   const groupedQuickCards = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-grid .group-character-quick-card')];
-  expect(groupedQuickCards.length).toBeGreaterThan(0);
-  expect(groupedQuickCards.every((card) => !card.querySelector('.group-character-quick-missing'))).toBe(true);
+  expect(groupedQuickCards).toHaveLength(quickCharacterCards.length);
+  expect(groupedQuickCards.some((card) => card.querySelector('.group-character-quick-missing'))).toBe(true);
   const ownerGroups = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-group')];
   expect(ownerGroups[0].querySelector('h3').textContent).toBe('Member');
   const ownOwnerCards = [...ownerGroups[0].querySelectorAll('.group-character-quick-card')];
@@ -678,21 +678,25 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const ownAssignedQuickCard = quickCharacterCards.find((card) => (
     card.querySelector('.group-character-quick-details > strong').textContent === '오잉느'
   ));
-  expect(ownAssignedQuickCard.draggable).toBe(true);
-  const removeOwnAssignmentButton = within(ownAssignedQuickCard)
+  expect(ownAssignedQuickCard.draggable).toBe(false);
+  expect(within(ownAssignedQuickCard).queryByRole('button', { name: '오잉느 파티 편성 제외' })).toBeNull();
+  const ownAssignedPartyMember = [...document.querySelectorAll('.party-overview-member')]
+    .find((member) => member.querySelector('span').textContent === '오잉느');
+  expect(ownAssignedPartyMember.draggable).toBe(true);
+  const removeOwnAssignmentButton = within(ownAssignedPartyMember)
     .getByRole('button', { name: '오잉느 파티 편성 제외' });
   fireEvent.click(removeOwnAssignmentButton);
   expect(screen.getByRole('status').textContent).toContain('편성 변경을 임시 저장했습니다');
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
-  const assignedQuickCardForMenuDrop = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
-    .find((card) => card.querySelector('.group-character-quick-details > strong').textContent === '오잉느');
-  fireEvent.dragStart(assignedQuickCardForMenuDrop, { dataTransfer: dragData });
+  const assignedPartyMemberForMenuDrop = [...document.querySelectorAll('.party-overview-member')]
+    .find((member) => member.querySelector('span').textContent === '오잉느');
+  fireEvent.dragStart(assignedPartyMemberForMenuDrop, { dataTransfer: dragData });
   fireEvent.drop(groupCharacterQuickMenu, { dataTransfer: dragData });
   expect(screen.getByRole('status').textContent).toContain('편성 변경을 임시 저장했습니다');
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
-  const assignedQuickCardForBlankDrop = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
-    .find((card) => card.querySelector('.group-character-quick-details > strong').textContent === '오잉느');
-  fireEvent.dragStart(assignedQuickCardForBlankDrop, { dataTransfer: dragData });
+  const assignedPartyMemberForBlankDrop = [...document.querySelectorAll('.party-overview-member')]
+    .find((member) => member.querySelector('span').textContent === '오잉느');
+  fireEvent.dragStart(assignedPartyMemberForBlankDrop, { dataTransfer: dragData });
   fireEvent.drop(document.querySelector('.group-main-party-overview-heading'), { dataTransfer: dragData });
   expect(screen.getByRole('status').textContent).toContain('편성 변경을 임시 저장했습니다');
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));

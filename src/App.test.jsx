@@ -474,7 +474,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .toContain('카오스 감시자 칼로스');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
-    .toContain('2인격 가능 추천');
+    .toContain('2인격 가능');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning button')).toBeNull();
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .not.toContain('검은 마법사');
@@ -655,7 +655,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const ownActiveCharacterWrapAfterAssignment = ownActiveCharacterButton.closest('.character-card-wrap');
   await waitFor(() => expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent)
     .not.toContain('카오스 감시자 칼로스'));
-  expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent).toContain('3인격 가능 추천');
+  expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent).toContain('3인격 가능');
   expect(ownActiveCharacterWrapAfterAssignment.querySelector('.character-party-link').textContent)
     .toContain('Test group · 카오스 감시자 칼로스');
   const partyRecommendationDetails = ownActiveCharacterWrapAfterAssignment.querySelector('.character-party-link-details');

@@ -243,6 +243,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   ];
   let groupCharacterAdded = false;
   let kalosPartyCount = 0;
+  let includeNormalKalingParty = false;
   let groupImageBossId = null;
   let groupMembers = [
     { email: 'member@example.test', name: 'Member', role: 'admin', joinedAt: '2026-10-01T00:00:00.000Z', characterCount: 1, isOwner: true },
@@ -261,7 +262,18 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       image: null,
       multiplier: 60,
     }],
-  }))).map((party) => ({
+  }))).concat(includeNormalKalingParty ? [{
+    partyId: 'party-normal-kaling',
+    bossId: 'normal_kaling',
+    members: [{
+      nickname: '오잉느',
+      ocid: 'ocid-1',
+      ownerSub: 'member-sub',
+      ownerEmail: 'member@example.test',
+      image: syncedCharacters[0].image,
+      multiplier: 50,
+    }],
+  }] : []).map((party) => ({
     ...party,
     members: party.members.map((member) => {
       const ocid = member.ocid;
@@ -556,6 +568,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.querySelector('.group-main-party-overview')).not.toBeNull();
   expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(1);
+  expect(screen.queryByRole('group', { name: '파티 보기 방식' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '빈 파티' }));
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '빈 파티' }));
   const initialGroupmateQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
     .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '그룹동료');
   expect(initialGroupmateQuickCard.querySelector('.group-character-quick-details b').textContent).toBe('80.0%');
@@ -616,15 +632,14 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const quickCharacterCards = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')];
   const assignedQuickCharacterCards = quickCharacterCards.filter((card) => card.classList.contains('already-assigned'));
   expect(assignedQuickCharacterCards.every((card) => (
-    card.querySelector('.group-character-quick-assignment-note').textContent === '이미 그룹에 편성되어있습니다.'
+    card.querySelector('.group-character-quick-assignment-note').textContent === '편성됨'
   ))).toBe(true);
   expect(quickCharacterCards.indexOf(assignedQuickCharacterCards[0]))
     .toBeGreaterThan(quickCharacterCards.findIndex((card) => !card.classList.contains('already-assigned')));
   const sameAccountCharacterCard = quickCharacterCards.find((card) => (
     card.querySelector('.group-character-quick-details > strong').textContent === '아잉느'
   ));
-  expect(sameAccountCharacterCard.querySelector('.group-character-quick-assignment-note').textContent)
-    .toBe('이미 같은 계정의 캐릭터가 편성되어있습니다.');
+  expect(sameAccountCharacterCard.querySelector('.group-character-quick-assignment-note').textContent).toBe('편성됨');
   expect(sameAccountCharacterCard.querySelector('button')).toBeNull();
   await waitFor(() => expect([...document.querySelectorAll('.group-main-party-card')]
     .some((card) => card.textContent.includes('오잉느') && card.querySelector('.party-summary strong'))).toBe(true));
@@ -664,14 +679,46 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .find((card) => card.textContent.includes('그룹동료'));
   expect(populatedKalosParty.classList.contains('boss-cleared')).toBe(true);
   expect(populatedKalosParty.querySelector('.party-clear-status').textContent).toBe('클리어');
-  fireEvent.click(populatedKalosParty);
+  expect(populatedKalosParty.querySelector('.party-overview-member').textContent).toContain('80.0%');
+  const defaultPartyCards = [...document.querySelectorAll('.group-main-party-card')];
+  expect(defaultPartyCards.at(-1).classList.contains('boss-cleared')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '미클 파티만 보기' }));
+  expect(document.querySelectorAll('.group-main-party-card').length).toBeGreaterThan(0);
+  expect([...document.querySelectorAll('.group-main-party-card')]
+    .every((card) => !card.classList.contains('boss-cleared'))).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '미클 파티만 보기' }));
+  fireEvent.click(screen.getByRole('button', { name: '내 캐릭터 파티' }));
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(1);
+  expect(document.querySelector('.group-main-party-card').textContent).toContain('오잉느');
+  fireEvent.click(screen.getByRole('button', { name: '빈 파티' }));
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(2);
+  expect(document.querySelector('.party-overview-filter-hint').textContent).toContain('함께 표시');
+  fireEvent.click(screen.getByRole('button', { name: '내 캐릭터 파티' }));
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(1);
+  expect(document.querySelector('.group-main-party-card').textContent).toContain('빈 파티');
+  fireEvent.click(screen.getByRole('button', { name: '빈 파티' }));
+  const partySearch = screen.getByRole('searchbox', { name: '보스 또는 캐릭터 검색' });
+  fireEvent.change(partySearch, { target: { value: '그룹동료' } });
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(1);
+  expect(document.querySelector('.group-main-party-card').textContent).toContain('그룹동료');
+  fireEvent.change(partySearch, { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: '배율 100% 미달' }));
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(1);
+  expect(document.querySelector('.group-main-party-card').textContent).toContain('빈 파티');
+  fireEvent.click(screen.getByRole('button', { name: '배율 100% 미달' }));
+  fireEvent.change(screen.getByLabelText('정렬'), { target: { value: 'multiplier-asc' } });
+  expect(document.querySelector('.group-main-party-card').textContent).toContain('빈 파티');
+  fireEvent.change(screen.getByLabelText('정렬'), { target: { value: 'default' } });
+  const populatedKalosPartyAfterFiltering = [...document.querySelectorAll('.group-main-party-card')]
+    .find((card) => card.textContent.includes('그룹동료'));
+  fireEvent.click(populatedKalosPartyAfterFiltering);
   const inlinePartyEditor = document.querySelector('.group-quick-party-editor');
   expect(inlinePartyEditor).not.toBeNull();
   expect(document.querySelectorAll('.group-character-quick-card').length).toBeGreaterThan(0);
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.querySelector('.group-main-party-open')).toBeNull();
-  const partyMultiplier = populatedKalosParty.querySelector('.party-summary strong').textContent;
-  expect(Number(populatedKalosParty.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')))
+  const partyMultiplier = populatedKalosPartyAfterFiltering.querySelector('.party-summary strong').textContent;
+  expect(Number(populatedKalosPartyAfterFiltering.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')))
     .toBe(Math.min(100, Math.max(0, Number.parseFloat(partyMultiplier))));
   const updatedGroupCharacterQuickMenu = document.querySelector('.group-character-quick-menu');
   expect(updatedGroupCharacterQuickMenu.querySelector('header h2').textContent).toBe('감시자 칼로스 배율순');
@@ -689,7 +736,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .querySelector('.difficulty-star')).toBeNull();
   const partyCountBeforeDelete = document.querySelectorAll('.group-main-party-card').length;
   const partyCommitCountBeforeDelete = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
-  fireEvent.click(within(populatedKalosParty).getByRole('button', { name: /번째 파티 삭제/ }));
+  fireEvent.click(within(populatedKalosPartyAfterFiltering).getByRole('button', { name: /번째 파티 삭제/ }));
   expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(partyCountBeforeDelete - 1);
   expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(partyCommitCountBeforeDelete);
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
@@ -796,6 +843,24 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   ]);
   expect(new Headers(importCalls[0].init.headers).get('Authorization')).toBe('Bearer test-access-token');
   expect(workerCalls.some(({ method, path }) => method === 'POST' && path === '/api/characters/maplescouter-scores')).toBe(false);
+
+  syncedCharacters[0].scheduler.boss_contents.push({
+    content_name: '카링',
+    difficulty: 'easy',
+    complete_flag: 'true',
+  });
+  includeNormalKalingParty = true;
+  fireEvent.click(screen.getByTitle('Test group'));
+  await screen.findByRole('heading', { name: '파티 빠른 편성' });
+  fireEvent.click(screen.getByRole('button', { name: '내 캐릭터 스케줄 새로고침' }));
+  await screen.findByText(/내 계정 4개 캐릭터 스케줄을 새로고침했습니다/);
+  const normalKalingParty = [...document.querySelectorAll('.group-main-party-card')]
+    .find((card) => card.id === 'group-party-party-normal-kaling');
+  expect(normalKalingParty.classList.contains('boss-cleared')).toBe(true);
+  expect(normalKalingParty.querySelector('.party-clear-status').textContent).toBe('클리어');
+  expect(workerCalls.filter(({ method, path }) => (
+    method === 'POST' && path === '/api/characters/verify'
+  ))).toHaveLength(4);
 });
 
 test('hides group image and deletion settings from non-admin members', async () => {

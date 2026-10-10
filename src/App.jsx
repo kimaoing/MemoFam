@@ -234,19 +234,13 @@ function summarizeBossParty(party, groupCharacters = []) {
   const boss = bossDetails(party.bossId);
   const members = party.members || [];
   const totalMultiplier = members.reduce((total, member) => total + (Number(member.multiplier) || 0), 0);
-  const partyLeader = members[0];
-  const leaderCharacter = partyLeader
-    ? groupCharacters.find((character) => (
-      character.ocid === partyLeader.ocid
-      && (!partyLeader.ownerSub || character.ownerSub === partyLeader.ownerSub)
-    )) || partyLeader
-    : null;
-  const leaderBossSchedules = leaderCharacter?.scheduler?.boss_contents
-    || partyLeader?.scheduler?.boss_contents
-    || [];
-  const matchingSchedules = leaderBossSchedules.filter((item) => {
-    const option = scheduleBossOption(item);
-    return option.familyKey === boss.familyId && option.difficulty === boss.difficulty;
+  const matchingSchedules = members.flatMap((member) => {
+    const character = groupCharacters.find((groupCharacter) => (
+      groupCharacter.ocid === member.ocid
+      && (!member.ownerSub || groupCharacter.ownerSub === member.ownerSub)
+    )) || member;
+    return (character.scheduler?.boss_contents || [])
+      .filter((item) => scheduleBossOption(item).familyKey === boss.familyId);
   });
   const cleared = matchingSchedules.some((item) => item.complete_flag === true || item.complete_flag === 'true');
   return {
@@ -322,6 +316,14 @@ function App() {
   const [groupParties, setGroupParties] = useState([]);
   const [partyDraft, setPartyDraft] = useState(null);
   const [allGroupParties, setAllGroupParties] = useState([]);
+  const [partyOverviewSearch, setPartyOverviewSearch] = useState('');
+  const [partyOverviewSort, setPartyOverviewSort] = useState('default');
+  const [partyOverviewFilters, setPartyOverviewFilters] = useState({
+    mine: false,
+    empty: false,
+    belowTarget: false,
+    uncleared: false,
+  });
   const [showGroupDeleteConfirmation, setShowGroupDeleteConfirmation] = useState(false);
   const [memberRemovalEmail, setMemberRemovalEmail] = useState('');
   const [focusedPartyId, setFocusedPartyId] = useState('');
@@ -1060,6 +1062,9 @@ function App() {
   async function selectGroup(groupId) {
     setPartyDraft(null);
     setSelectedGroupId(groupId);
+    setPartyOverviewSearch('');
+    setPartyOverviewSort('default');
+    setPartyOverviewFilters({ mine: false, empty: false, belowTarget: false, uncleared: false });
     setQuickPartyBossId('');
     setSelectedQuickCharacterKey('');
     setShowGroupDeleteConfirmation(false);
@@ -1264,8 +1269,79 @@ function App() {
     });
   }
 
+  async function refreshGroupPartySchedules() {
+    setBusy('group-schedule-refresh');
+    setNotice(null);
+    try {
+      const result = await syncCharacters(null, { quiet: true });
+      if (!result) throw new Error('캐릭터 스케줄을 동기화하지 못했습니다.');
+      if (selectedGroupId) await loadGroupData(accessToken, selectedGroupId);
+      const unavailableNote = result.schedulerUnavailableCount
+        ? ` ${result.schedulerUnavailableCount}개 캐릭터의 스케줄 정보는 가져오지 못했습니다.`
+        : '';
+      setNotice({
+        type: result.schedulerUnavailableCount ? 'error' : 'success',
+        text: `내 계정 ${result.characterCount}개 캐릭터 스케줄을 새로고침했습니다.${unavailableNote}`,
+      });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy('');
+    }
+  }
+
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
   const currentGroupParties = partyDraft?.groupId === selectedGroupId ? partyDraft.parties : groupParties;
+  const partyOverviewEntries = currentGroupParties.map((party, index) => {
+    const config = bossDetails(party.bossId);
+    const members = party.members || [];
+    return {
+      party,
+      config,
+      members,
+      summary: summarizeBossParty(party, groupCharacters),
+      hasOwnMember: members.some(({ ownerSub }) => ownerSub === account?.sub),
+      isEmpty: members.length === 0,
+      index,
+    };
+  });
+  const normalizedPartySearch = partyOverviewSearch.trim().toLocaleLowerCase('ko');
+  const hasPartyTypeFilter = partyOverviewFilters.mine || partyOverviewFilters.empty;
+  const visiblePartyEntries = partyOverviewEntries
+    .filter(({ config, members, summary, hasOwnMember, isEmpty }) => {
+      if (hasPartyTypeFilter
+        && !((partyOverviewFilters.mine && hasOwnMember) || (partyOverviewFilters.empty && isEmpty))) return false;
+      if (partyOverviewFilters.belowTarget && summary.totalMultiplier >= 100) return false;
+      if (partyOverviewFilters.uncleared && summary.cleared) return false;
+      if (!normalizedPartySearch) return true;
+      const searchableText = [
+        config.name,
+        config.difficultyLabel,
+        ...members.map(({ nickname }) => nickname),
+      ].join(' ').toLocaleLowerCase('ko');
+      return searchableText.includes(normalizedPartySearch);
+    })
+    .sort((left, right) => {
+      if (partyOverviewSort === 'multiplier-asc') {
+        return left.summary.totalMultiplier - right.summary.totalMultiplier || left.index - right.index;
+      }
+      if (partyOverviewSort === 'members-asc') {
+        return left.members.length - right.members.length || left.index - right.index;
+      }
+      if (partyOverviewSort === 'boss-name') {
+        return left.config.name.localeCompare(right.config.name, 'ko')
+          || compareBossDifficulty(left.config, right.config)
+          || Number(left.summary.cleared) - Number(right.summary.cleared)
+          || left.index - right.index;
+      }
+      return Number(left.summary.cleared) - Number(right.summary.cleared)
+        || left.index - right.index;
+    });
+  const hasActivePartyOverviewFilters = Boolean(
+    normalizedPartySearch
+    || Object.values(partyOverviewFilters).some(Boolean)
+    || partyOverviewSort !== 'default',
+  );
   const activeCharacters = characters
     .filter(({ ocid }) => activeCharacterIds.includes(ocid))
     .sort((left, right) => (
@@ -1593,13 +1669,13 @@ function App() {
                 {isAssigned && (
                   <em className="group-character-quick-assignment-note">
                     {character.assignedParty.groupId === selectedGroupId
-                      ? '이미 그룹에 편성되어있습니다.'
-                      : '이미 다른 그룹에 편성되어있습니다.'}
+                      ? '편성됨'
+                      : '편성됨'}
                   </em>
                 )}
                 {sameAccountCharacterAssigned && (
                   <em className="group-character-quick-assignment-note">
-                    이미 같은 계정의 캐릭터가 편성되어있습니다.
+                    편성됨
                   </em>
                 )}
               </div>
@@ -2134,12 +2210,28 @@ function App() {
                           <div><p className="eyebrow">PARTY BUILDER</p><h2>파티 빠른 편성</h2></div>
                           <span className="updated-count">{currentGroupParties.length} 파티</span>
                         </div>
-                        <p className="group-boss-picker-hint">보스 난이도를 선택하면 빈 파티가 바로 추가됩니다. 편성할 파티를 선택한 뒤 캐릭터를 추가하거나 드래그하세요.</p>
+                        <p className="group-boss-picker-hint">
+                          보스 난이도를 선택하면 빈 파티가 바로 추가됩니다. 파티 카드를 누르면 편성 후보를 열 수 있습니다.
+                        </p>
                         <section className="group-main-party-overview" aria-label="편성된 파티">
                           <div className="group-main-party-overview-heading">
                             <h3>편성된 파티</h3>
                             <div>
                               <span>{currentGroupParties.length}개</span>
+                              <button
+                                className={`outline-button group-party-schedule-refresh ${busy === 'group-schedule-refresh' ? 'refreshing' : ''}`}
+                                type="button"
+                                onClick={refreshGroupPartySchedules}
+                                disabled={busy === 'group-schedule-refresh'}
+                                aria-label="내 캐릭터 스케줄 새로고침"
+                                title="내 계정 캐릭터 스케줄을 불러와 클리어 여부를 갱신"
+                              >
+                                <svg aria-hidden="true" viewBox="0 0 24 24">
+                                  <path d="M20 7v5h-5M4 17v-5h5" />
+                                  <path d="M5.7 9A7 7 0 0 1 18 6.2L20 12M4 12l2 5.8A7 7 0 0 0 18.3 15" />
+                                </svg>
+                                <span>{busy === 'group-schedule-refresh' ? '새로고침 중' : '스케줄 새로고침'}</span>
+                              </button>
                               {partyDraft?.groupId === selectedGroupId && (
                                 <>
                                   <button className="outline-button" type="button" onClick={discardPartyDraft} disabled={busy === 'party-save'}>
@@ -2152,12 +2244,75 @@ function App() {
                               )}
                             </div>
                           </div>
+                          <div className="party-overview-controls">
+                            <div className="party-overview-toolbar">
+                              <label className="party-overview-search">
+                                <span className="sr-only">보스 또는 캐릭터 검색</span>
+                                <input
+                                  type="search"
+                                  value={partyOverviewSearch}
+                                  onChange={(event) => setPartyOverviewSearch(event.target.value)}
+                                  placeholder="보스·캐릭터 검색"
+                                />
+                              </label>
+                              <label className="party-overview-sort">
+                                <span>정렬</span>
+                                <select value={partyOverviewSort} onChange={(event) => setPartyOverviewSort(event.target.value)}>
+                                  <option value="default">기본 순서</option>
+                                  <option value="multiplier-asc">배율 낮은 순</option>
+                                  <option value="members-asc">인원 적은 순</option>
+                                  <option value="boss-name">보스 이름 순</option>
+                                </select>
+                              </label>
+                              <span className="party-overview-result-count" aria-live="polite">
+                                {visiblePartyEntries.length} / {partyOverviewEntries.length} 파티
+                              </span>
+                            </div>
+                            <div className="party-overview-filters" role="group" aria-label="파티 필터">
+                              <button
+                                className={partyOverviewFilters.mine ? 'active' : ''}
+                                type="button"
+                                aria-pressed={partyOverviewFilters.mine}
+                                onClick={() => setPartyOverviewFilters((current) => ({ ...current, mine: !current.mine }))}
+                              >내 캐릭터 파티</button>
+                              <button
+                                className={partyOverviewFilters.empty ? 'active' : ''}
+                                type="button"
+                                aria-pressed={partyOverviewFilters.empty}
+                                onClick={() => setPartyOverviewFilters((current) => ({ ...current, empty: !current.empty }))}
+                              >빈 파티</button>
+                              <button
+                                className={partyOverviewFilters.belowTarget ? 'active' : ''}
+                                type="button"
+                                aria-pressed={partyOverviewFilters.belowTarget}
+                                onClick={() => setPartyOverviewFilters((current) => ({ ...current, belowTarget: !current.belowTarget }))}
+                              >배율 100% 미달</button>
+                              <button
+                                className={partyOverviewFilters.uncleared ? 'active uncleared-only' : ''}
+                                type="button"
+                                aria-pressed={partyOverviewFilters.uncleared}
+                                onClick={() => setPartyOverviewFilters((current) => ({ ...current, uncleared: !current.uncleared }))}
+                              >미클 파티만 보기</button>
+                              {hasActivePartyOverviewFilters && (
+                                <button
+                                  className="party-overview-reset"
+                                  type="button"
+                                  onClick={() => {
+                                    setPartyOverviewSearch('');
+                                    setPartyOverviewSort('default');
+                                    setPartyOverviewFilters({ mine: false, empty: false, belowTarget: false, uncleared: false });
+                                  }}
+                                >초기화</button>
+                              )}
+                              {partyOverviewFilters.mine && partyOverviewFilters.empty && (
+                                <span className="party-overview-filter-hint">내 캐릭터 파티와 빈 파티를 함께 표시합니다.</span>
+                              )}
+                            </div>
+                          </div>
                           {currentGroupParties.length ? (
-                            <div className="group-main-party-grid">
-                              {currentGroupParties.map((party) => {
-                                const config = bossDetails(party.bossId);
-                                const summary = summarizeBossParty(party, groupCharacters);
-                                const members = party.members || [];
+                            visiblePartyEntries.length ? (
+                              <div className="group-main-party-grid">
+                              {visiblePartyEntries.map(({ party, config, summary, members }) => {
                                 const sameBossPartyNumber = currentGroupParties
                                   .filter(({ bossId }) => bossId === party.bossId)
                                   .findIndex(({ partyId }) => partyId === party.partyId) + 1;
@@ -2199,6 +2354,14 @@ function App() {
                                         <strong>{config.name}</strong>
                                       </span>
                                       <b>{members.length}/{config.maxPartySize}인</b>
+                                      <span
+                                        className={`party-clear-status ${summary.cleared ? 'cleared' : 'not-cleared'}`}
+                                        title={summary.clearRecordAvailable
+                                          ? '그룹 파티원의 해당 보스 완료 기록 기준'
+                                          : '파티 멤버에게 이 보스의 완료 기록이 없습니다.'}
+                                      >
+                                        {summary.statusLabel}
+                                      </span>
                                       {canDeleteParty && (
                                         <button
                                           className="party-remove-button"
@@ -2210,61 +2373,55 @@ function App() {
                                       )}
                                     </header>
                                     <div className="group-main-party-members">
-                                      {members.length ? members.map((member) => {
-                                        const canManage = member.ownerSub === account?.sub || selectedGroup.role === 'admin';
-                                        return (
-                                          <span
-                                            className="group-main-party-member"
-                                            key={`${member.ownerSub}:${member.ocid}`}
-                                            draggable={canManage}
-                                            onDragStart={(event) => startPartyMemberDrag(event, member)}
-                                            onDragEnd={finishPartyMemberDrag}
-                                          >
-                                            {member.image
-                                              ? <img src={member.image} alt="" />
-                                              : <span className="group-main-party-member-fallback">{member.nickname.slice(0, 1)}</span>}
-                                            {member.nickname} <small>{Number(member.multiplier || 0).toFixed(1)}%</small>
-                                              {canManage && (
-                                                <button
-                                                  type="button"
-                                                  aria-label={`${member.nickname} ${config.name} 파티에서 제외`}
-                                                  onClick={() => unassignBossFromCharacter(member, party.bossId, party.partyId)}
-                                                >×</button>
-                                              )}
-                                            </span>
-                                        );
-                                      }) : <span className="group-main-party-empty">비어 있음 · 캐릭터를 여기로 드래그하세요</span>}
+                                      {members.length ? members.map((member) => (
+                                        <span
+                                          className={`party-overview-member ${member.ownerSub === account?.sub ? 'own' : ''}`}
+                                          key={`${member.ownerSub}:${member.ocid}`}
+                                          title={`${member.nickname} · ${Number(member.multiplier || 0).toFixed(1)}%`}
+                                        >
+                                          <span>{member.nickname}</span>
+                                          <small>{Number(member.multiplier || 0).toFixed(1)}%</small>
+                                        </span>
+                                      )) : (
+                                        <span className="group-main-party-empty">빈 파티 · 캐릭터를 끌어 놓아 추가</span>
+                                      )}
                                     </div>
                                     <div className={`party-summary ${summary.ready ? 'ready' : ''} ${summary.cleared ? 'cleared' : ''}`}>
-                                      <span>파티 배율 <strong>{summary.totalMultiplier.toFixed(1)}%</strong></span>
+                                      <span>총 <strong>{summary.totalMultiplier.toFixed(1)}%</strong></span>
+                                      <div
+                                        className="party-multiplier-progress"
+                                        role="progressbar"
+                                        aria-label={`${config.name} 파티 배율`}
+                                        aria-valuemin={0}
+                                        aria-valuemax={100}
+                                        aria-valuenow={Math.min(100, Math.max(0, summary.totalMultiplier))}
+                                      >
+                                        <span style={{ width: `${Math.min(100, Math.max(0, summary.totalMultiplier))}%` }} />
+                                      </div>
                                       <span>{summary.cleared
-                                        ? '클리어 완료'
+                                        ? '클리어'
                                         : summary.ready
                                           ? '클리어 가능'
-                                          : <><strong>{Math.max(0, 100 - summary.totalMultiplier).toFixed(1)}%</strong> 더 필요</>}</span>
+                                          : `${Math.max(0, 100 - summary.totalMultiplier).toFixed(1)}% 부족`}</span>
                                     </div>
-                                    <div
-                                      className="party-multiplier-progress"
-                                      role="progressbar"
-                                      aria-label={`${config.name} 파티 배율`}
-                                      aria-valuemin={0}
-                                      aria-valuemax={100}
-                                      aria-valuenow={Math.min(100, Math.max(0, summary.totalMultiplier))}
-                                    >
-                                      <span style={{ width: `${Math.min(100, Math.max(0, summary.totalMultiplier))}%` }} />
-                                    </div>
-                                    <span
-                                      className={`party-clear-status ${summary.cleared ? 'cleared' : 'not-cleared'}`}
-                                      title={summary.clearRecordAvailable
-                                        ? '첫 번째 파티원의 보스 완료 기록 기준'
-                                        : '첫 번째 파티원에게 이 보스의 완료 기록이 없습니다.'}
-                                    >
-                                      {summary.statusLabel}
-                                    </span>
                                   </article>
                                 );
                               })}
                             </div>
+                            ) : (
+                              <div className="party-overview-no-results">
+                                <span>조건에 맞는 파티가 없습니다.</span>
+                                <button
+                                  className="outline-button"
+                                  type="button"
+                                  onClick={() => {
+                                    setPartyOverviewSearch('');
+                                    setPartyOverviewSort('default');
+                                    setPartyOverviewFilters({ mine: false, empty: false, belowTarget: false, uncleared: false });
+                                  }}
+                                >필터 초기화</button>
+                              </div>
+                            )
                           ) : (
                             <p className="group-main-party-empty-state">아직 편성된 파티가 없습니다. 위에서 보스 난이도를 선택해 파티를 만들어 보세요.</p>
                           )}

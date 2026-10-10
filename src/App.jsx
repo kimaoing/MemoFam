@@ -1649,9 +1649,19 @@ function App() {
                 <button className="quiet-button" type="button" aria-label="설치 안내 닫기" onClick={() => setShowExtensionInstallHelp(false)}>×</button>
               </div>
               <p>Chrome Web Store 등록 없이 ZIP 파일로 설치할 수 있습니다.</p>
-              <a className="outline-button extension-download" href="/memofam-maplescouter-reader.zip" download>
-                MemoFam Reader 다운로드
-              </a>
+              <div className="extension-install-actions">
+                <a className="outline-button extension-download" href="/memofam-maplescouter-reader.zip" download>
+                  MemoFam Reader 다운로드
+                </a>
+                <a
+                  className="outline-button extension-open-settings"
+                  href="chrome://extensions/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Chrome 확장 프로그램 열기
+                </a>
+              </div>
               <ol>
                 <li>ZIP을 다운로드해 압축을 풉니다.</li>
                 <li>Chrome에서 <code>chrome://extensions</code>, Edge에서 <code>edge://extensions</code>를 엽니다.</li>
@@ -1861,7 +1871,8 @@ function App() {
                                       </span>
                                     </span>
                                   </button>
-                                  <div className="character-party-column" aria-label={`${character.nickname} 파티 보스`}>
+                                  <div className="character-card-side-info">
+                                    <div className="character-party-column" aria-label={`${character.nickname} 파티 보스`}>
                                     {assignedParties.length > 0 && (
                                       <div className="character-party-links" aria-label={`${character.nickname} 편성된 그룹 파티`}>
                                         {assignedParties.map((party) => {
@@ -1930,8 +1941,8 @@ function App() {
                                     {!assignedParties.length && !missingRecommendations.length && (
                                       <div className="character-recommendation-empty">편성된 파티 보스 없음</div>
                                     )}
-                                  </div>
-                                  <div className="character-solo-column" aria-label={`${character.nickname} 솔플 보스`}>
+                                    </div>
+                                    <div className="character-solo-column" aria-label={`${character.nickname} 솔플 보스`}>
                                     {characterSoloRecommendations.length > 0 ? (
                                       <div className="character-solo-recommendations">
                                         <strong className="character-solo-recommendations-heading">솔플 추천</strong>
@@ -1965,6 +1976,7 @@ function App() {
                                     ) : (
                                       <div className="character-recommendation-empty">솔플 추천 보스 없음</div>
                                     )}
+                                    </div>
                                   </div>
                                 </div>
                               );

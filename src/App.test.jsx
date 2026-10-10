@@ -453,8 +453,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const ownActiveCharacterWrap = screen.getByRole('button', { name: /오잉느/ }).closest('.character-card-wrap');
   expect([...ownActiveCharacterWrap.children].map((child) => child.className)).toEqual([
     expect.stringContaining('character-card'),
-    'character-party-column',
-    'character-solo-column',
+    'character-card-side-info',
   ]);
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .toContain('카오스 감시자 칼로스');
@@ -685,6 +684,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const extensionDownload = screen.getByRole('link', { name: 'MemoFam Reader 다운로드' });
   expect(extensionDownload.getAttribute('href')).toBe('/memofam-maplescouter-reader.zip');
   expect(extensionDownload.hasAttribute('download')).toBe(true);
+  const extensionSettingsLink = screen.getByRole('link', { name: 'Chrome 확장 프로그램 열기' });
+  expect(extensionSettingsLink.getAttribute('href')).toBe('chrome://extensions/');
+  expect(extensionSettingsLink.getAttribute('target')).toBe('_blank');
+  expect(extensionSettingsLink.getAttribute('rel')).toContain('noopener');
   expect(mapleScouterPopup.close).toHaveBeenCalledOnce();
 
   await act(async () => {

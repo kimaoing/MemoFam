@@ -538,6 +538,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
                 { nickname: '오잉느', bossId: 'hard_blackmage', multiplier: 100 },
                 { nickname: '그룹동료', bossId: 'chaos_kalos', multiplier: 80 },
                 { nickname: '그룹동료', bossId: 'hard_blackmage', multiplier: 33 },
+                { nickname: '그룹동료', bossId: 'hard_maleficstar', multiplier: 33 },
                 { nickname: '오잉느', bossId: 'normal_bardrix', multiplier: 100 },
                 { nickname: '오잉느', bossId: 'hard_bardrix', multiplier: 33 },
               ] }
@@ -728,6 +729,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(unassignedGroupmateWarningTrigger);
   const unassignedGroupmateWarning = screen.getByRole('dialog', { name: '그룹동료 그룹 파티 편성 필요' });
   expect(unassignedGroupmateWarning.textContent).toContain('카오스 감시자 칼로스');
+  expect(unassignedGroupmateWarning.textContent).toContain('하드 찬란한 흉성');
+  expect(unassignedGroupmateWarning.textContent).toContain('3인격 가능 · 배율 33.0%');
   fireEvent.click(unassignedGroupmateWarningTrigger);
   const characterMenuToggle = screen.getByRole('button', { name: '캐릭터 빠른 메뉴 접기' });
   expect(characterMenuToggle.querySelector('svg').dataset.direction).toBe('right');
@@ -759,7 +762,11 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(groupmateWarningPopup.textContent)
     .toContain('검은 마법사');
   expect(groupmateWarningPopup.textContent)
-    .not.toContain('감시자 칼로스');
+    .toContain('하드 찬란한 흉성');
+  expect(groupmateWarningPopup.textContent)
+    .toContain('3인격 가능 · 배율 33.0%');
+  expect(groupmateWarningPopup.textContent)
+    .toContain('카오스 감시자 칼로스');
   expect(groupmateWarningPopup.style.left).toBe('188px');
   expect(groupmateWarningPopup.style.top).toBe('228px');
   fireEvent.click(groupmateWarningTrigger);
@@ -770,6 +777,12 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
   expect(within(initialGroupmateQuickCard)
     .getByRole('button', { name: '그룹동료 그룹 파티 편성 필요 안내' })).toBeDefined();
+  fireEvent.click(within(initialGroupmateQuickCard)
+    .getByRole('button', { name: '그룹동료 그룹 파티 편성 필요 안내' }));
+  expect(screen.getByRole('dialog', { name: '그룹동료 그룹 파티 편성 필요' }).textContent)
+    .toContain('카오스 감시자 칼로스');
+  fireEvent.click(within(initialGroupmateQuickCard)
+    .getByRole('button', { name: '그룹동료 그룹 파티 편성 필요 안내' }));
   expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))[0]
     .request.parties.find(({ bossId }) => bossId === 'chaos_kalos').members).toEqual([]);
 

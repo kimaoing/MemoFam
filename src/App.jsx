@@ -5,7 +5,6 @@ import bossRecommendationSettings from './boss-recommendations.json';
 import {
   bossRecommendationForCharacter,
   maxPartySizeForBoss,
-  partyRecommendationsForCharacter,
   recommendationsForCharacter,
 } from './bossRecommendations';
 
@@ -1631,8 +1630,13 @@ function App() {
             selectedQuickPartyBoss,
           )
           : null,
-        missingPartyRecommendations: partyRecommendationsForCharacter(character, characterMultipliers)
-          .filter((boss) => !partiesAcrossGroups.some((party) => party.bossId === boss.bossId)),
+        missingPartyRecommendations: recommendationsForCharacter(character, characterMultipliers)
+          .filter((boss) => !partiesAcrossGroups.some((party) => (
+            party.bossId === boss.bossId
+            && (party.members || []).some(({ ownerSub, ocid }) => (
+              ownerSub === character.ownerSub && ocid === character.ocid
+            ))
+          ))),
         assignedParty,
         sameAccountCharacterAssigned: Boolean(focusedQuickParty && (focusedQuickParty.members || []).some((member) => (
           member.ownerSub === character.ownerSub && member.ocid !== character.ocid
@@ -1737,7 +1741,7 @@ function App() {
     const solo = recommendationsForCharacter(character, characterMultipliers, { includeSolo: true })
       .filter((boss) => boss.recommendedPartySize === 1 && !assignedBossIds.has(boss.bossId));
     if (solo.length) soloRecommendations.set(character.ocid, solo);
-    const missing = partyRecommendationsForCharacter(character, characterMultipliers)
+    const missing = recommendationsForCharacter(character, characterMultipliers)
       .filter((boss) => !assignments.some(({ boss: assignedBoss }) => (
         assignedBoss.bossId === boss.bossId
       )));

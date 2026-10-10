@@ -658,16 +658,6 @@ function App() {
     });
   }
 
-  function quickAssignCharacter(character) {
-    if (!selectedGroupId || !selectedQuickPartyBoss) return;
-    const targetParty = currentGroupParties.find(({ partyId }) => partyId === focusedPartyId);
-    if (!targetParty || targetParty.bossId !== selectedQuickPartyBoss.bossId) {
-      setNotice({ type: 'error', text: '먼저 편성할 파티 카드를 선택하세요.' });
-      return;
-    }
-    stageCharacterOnParty(character, targetParty.partyId);
-  }
-
   function focusQuickParty(party) {
     setFocusedPartyId(party.partyId);
     setQuickPartyBossId(party.bossId);
@@ -1538,11 +1528,6 @@ function App() {
       ));
       return {
         ...character,
-        hasPartyAssignment: partiesAcrossGroups.some((party) => (
-          (party.members || []).some(({ ownerSub, ocid }) => (
-            ownerSub === character.ownerSub && ocid === character.ocid
-          ))
-        )),
         quickMultiplier: selectedQuickPartyBoss
           ? getCharacterBossMultiplier(character, selectedQuickPartyBoss.bossId)
           : 0,
@@ -1565,17 +1550,13 @@ function App() {
       };
     })
     .sort((left, right) => (
-      (Number(left.hasPartyAssignment) - Number(right.hasPartyAssignment))
+      (Number(Boolean(left.assignedParty)) - Number(Boolean(right.assignedParty)))
       || (selectedQuickPartyBoss ? right.quickMultiplier - left.quickMultiplier : 0)
       || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
       || (Number(right.level) || 0) - (Number(left.level) || 0)
       || left.nickname.localeCompare(right.nickname, 'ko')
     ));
-  const quickPartyWarningCandidates = quickPartyCandidates.filter(({ missingPartyRecommendations }) => (
-    missingPartyRecommendations.length > 0
-  ));
   const quickPartyCharacterGroups = quickPartyCandidates
-    .filter(({ missingPartyRecommendations }) => missingPartyRecommendations.length === 0)
     .reduce((groups, character) => {
       const ownerEmail = character.ownerEmail?.toLocaleLowerCase('ko') || '';
       const member = groupMembers.find(({ email }) => email.toLocaleLowerCase('ko') === ownerEmail);
@@ -1586,7 +1567,10 @@ function App() {
       if (group) group.characters.push(character);
       else groups.push({ key: character.ownerSub, ownerName, characters: [character] });
       return groups;
-    }, []);
+    }, [])
+    .sort((left, right) => (
+      Number(right.key === account?.sub) - Number(left.key === account?.sub)
+    ));
   const selectedQuickCharacter = quickPartyCandidates.find((character) => (
     `${character.ownerSub}:${character.ocid}` === selectedQuickCharacterKey
   ));
@@ -1832,20 +1816,6 @@ function App() {
             ))}
           </div>
         )}
-        {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
-          <button
-            className="primary-button group-character-quick-add-button"
-            type="button"
-            disabled={busy === 'party-save' || !focusedQuickParty}
-            title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
-            onClick={(event) => {
-              event.stopPropagation();
-              quickAssignCharacter(character);
-            }}
-          >
-            파티에 추가
-          </button>
-        )}
       </article>
     );
   };
@@ -1857,13 +1827,41 @@ function App() {
         <p>{selectedQuickPartyBoss ? '파티 카드로 드래그해 편성하고, 퀵메뉴나 빈 공간에 놓아 제외하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
       </header>
       <div className="group-character-quick-list">
-        {quickPartyWarningCandidates.map(renderQuickCharacterCard)}
         {quickPartyCharacterGroups.map(({ key, ownerName, characters: ownerCharacters }) => (
           <section className="group-character-owner-group" key={key} aria-label={`${ownerName} 캐릭터`}>
             <h3>{ownerName}</h3>
-            <div className="group-character-owner-grid">
-              {ownerCharacters.map(renderQuickCharacterCard)}
-            </div>
+            {ownerCharacters
+              .filter(({ assignedParty, missingPartyRecommendations }) => (
+                !assignedParty && missingPartyRecommendations.length > 0
+              ))
+              .map(renderQuickCharacterCard)}
+            {ownerCharacters.some(({ assignedParty, missingPartyRecommendations }) => (
+              !assignedParty && missingPartyRecommendations.length === 0
+            )) && (
+              <div className="group-character-owner-grid">
+                {ownerCharacters
+                  .filter(({ assignedParty, missingPartyRecommendations }) => (
+                    !assignedParty && missingPartyRecommendations.length === 0
+                  ))
+                  .map(renderQuickCharacterCard)}
+              </div>
+            )}
+            {ownerCharacters
+              .filter(({ assignedParty, missingPartyRecommendations }) => (
+                assignedParty && missingPartyRecommendations.length > 0
+              ))
+              .map(renderQuickCharacterCard)}
+            {ownerCharacters.some(({ assignedParty, missingPartyRecommendations }) => (
+              assignedParty && missingPartyRecommendations.length === 0
+            )) && (
+              <div className="group-character-owner-grid">
+                {ownerCharacters
+                  .filter(({ assignedParty, missingPartyRecommendations }) => (
+                    assignedParty && missingPartyRecommendations.length === 0
+                  ))
+                  .map(renderQuickCharacterCard)}
+              </div>
+            )}
           </section>
         ))}
         {!quickPartyCandidates.length && (

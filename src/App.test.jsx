@@ -629,18 +629,19 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     ['POST', 'PUT', 'DELETE'].includes(method)
       && (path.endsWith('/parties') || path.includes('/party-characters/'))
   )).length;
-  expect(groupmateQuickCard.querySelector('.group-character-quick-add-button').parentElement)
-    .toBe(groupmateQuickCard);
-  fireEvent.click(within(groupmateQuickCard).getByRole('button', { name: '파티에 추가' }));
+  expect(within(groupmateQuickCard).queryByRole('button', { name: '파티에 추가' })).toBeNull();
   expect(assignedCharacters.has('ocid-teammate-roster')).toBe(false);
-  const ownCharacterQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
-    .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '오잉느');
-  expect(ownCharacterQuickCard).toBeDefined();
   const dragData = {
     value: '',
     setData(_type, value) { this.value = value; },
     getData() { return this.value; },
   };
+  fireEvent.dragStart(groupmateQuickCard, { dataTransfer: dragData });
+  fireEvent.drop(document.querySelector('.group-main-party-card.focused'), { dataTransfer: dragData });
+  expect(assignedCharacters.has('ocid-teammate-roster')).toBe(false);
+  const ownCharacterQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
+    .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '오잉느');
+  expect(ownCharacterQuickCard).toBeDefined();
   fireEvent.dragStart(ownCharacterQuickCard, { dataTransfer: dragData });
   fireEvent.drop(document.querySelector('.group-main-party-card.focused'), { dataTransfer: dragData });
   expect(assignedCharacters.has('ocid-1')).toBe(false);
@@ -668,6 +669,12 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const groupedQuickCards = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-grid .group-character-quick-card')];
   expect(groupedQuickCards.length).toBeGreaterThan(0);
   expect(groupedQuickCards.every((card) => !card.querySelector('.group-character-quick-missing'))).toBe(true);
+  const ownerGroups = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-group')];
+  expect(ownerGroups[0].querySelector('h3').textContent).toBe('Member');
+  const ownOwnerCards = [...ownerGroups[0].querySelectorAll('.group-character-quick-card')];
+  const ownAssignedCardIndex = ownOwnerCards.findIndex((card) => card.classList.contains('already-assigned'));
+  const ownUnassignedCardIndex = ownOwnerCards.findIndex((card) => !card.classList.contains('already-assigned'));
+  expect(ownAssignedCardIndex).toBeGreaterThan(ownUnassignedCardIndex);
   const ownAssignedQuickCard = quickCharacterCards.find((card) => (
     card.querySelector('.group-character-quick-details > strong').textContent === '오잉느'
   ));

@@ -17,7 +17,6 @@ const extensionStatusType = 'maple-scout/extension-status';
 const rememberLoginKey = 'maple-scout-remember-login';
 const savedSessionKey = 'maple-scout-session';
 const themeKey = 'maple-scout-theme';
-const schedulePreferencesKeyPrefix = 'maple-scout-schedule-preferences:';
 const activeCharactersKeyPrefix = 'maple-scout-active-characters:';
 const nexonApiKeyCookie = 'maple-scout-nexon-api-key';
 const nexonApiKeyCookieMaxAge = 60 * 60 * 24 * 30;
@@ -43,45 +42,8 @@ const bossFamilyTopPrice = bossRecommendationSettings.bosses.reduce((prices, bos
   return prices;
 }, {});
 
-function bossFamilyOrder(familyId) {
-  const index = bossRecommendationSettings.highDifficultyOverrides.indexOf(familyId);
-  return index === -1 ? bossRecommendationSettings.highDifficultyOverrides.length : index;
-}
 function recommendationPartyLabel(size) {
   return Number(size) === 1 ? '솔플 가능' : `${size}인격 가능`;
-}
-
-const nonWeeklyBossFamilies = new Set(['cygnus', 'hilla', 'arkarium', 'vonleon', 'kawoong', 'horntail']);
-const nonWeeklyBossDifficulties = new Set([
-  'papulatus::normal',
-  'magnus::easy',
-  'magnus::normal',
-  'banban::normal',
-  'vellum::normal',
-  'bloodyqueen::normal',
-  'pierre::normal',
-]);
-const scheduleBossFamilyAliases = {
-  '시그너스': 'cygnus',
-  '힐라': 'hilla',
-  '아카이럼': 'arkarium',
-  '반레온': 'vonleon',
-  '카웅': 'kawoong',
-  '혼테일': 'horntail',
-  '파풀라투스': 'papulatus',
-  '매그너스': 'magnus',
-  '반반': 'banban',
-  '벨룸': 'vellum',
-  '블러디퀸': 'bloodyqueen',
-  '피에르': 'pierre',
-};
-
-function isDisplayedBossScheduleOption(option) {
-  const familyKey = option.familyKey.replace(/\s+/g, '').toLocaleLowerCase('ko');
-  const nameKey = option.name.replace(/\s+/g, '').toLocaleLowerCase('ko');
-  const familyId = scheduleBossFamilyAliases[nameKey] || scheduleBossFamilyAliases[familyKey] || familyKey;
-  return !nonWeeklyBossFamilies.has(familyId)
-    && !nonWeeklyBossDifficulties.has(`${familyId}::${option.difficulty}`);
 }
 
 function bossImageFor(bossId) {
@@ -162,24 +124,6 @@ function checkMapleScouterExtension() {
     timeoutId = window.setTimeout(() => finish(false), 600);
     window.postMessage({ type: extensionCheckType, requestId }, window.location.origin);
   });
-}
-
-function isIncomplete(item, boss = false) {
-  if (boss) return item.complete_flag !== 'true' && item.complete_flag !== true;
-  if (item.type === 'quest' && item.quest_state !== null && item.quest_state !== undefined) {
-    return String(item.quest_state) !== '2';
-  }
-  const maximum = Number(item.max_count || 0);
-  if (maximum > 0) return Number(item.now_count || 0) < maximum;
-  return item.registration_flag === 'true' || item.registration_flag === true;
-}
-
-function isRegistered(item) {
-  return item.registration_flag === 'true' || item.registration_flag === true;
-}
-
-function scheduleItemKey(item) {
-  return String(item.content_name || '').trim().toLocaleLowerCase('ko');
 }
 
 function readPreference(key, fallback) {
@@ -286,52 +230,6 @@ function scheduleBossOption(item) {
   };
 }
 
-function registeredScheduleKeys(items) {
-  return [...new Set(items.filter(isRegistered).map(scheduleItemKey))];
-}
-
-function registeredBossKeys(items) {
-  const selected = [];
-  const families = new Set();
-  let weeklyCount = 0;
-  for (const item of items) {
-    if (!isRegistered(item)) continue;
-    const option = scheduleBossOption(item);
-    if (families.has(option.familyKey)) continue;
-    if (option.cycle === 'weekly' && weeklyCount >= bossRecommendationSettings.maxBossesPerCharacter) continue;
-    selected.push(option.key);
-    families.add(option.familyKey);
-    if (option.cycle === 'weekly') weeklyCount += 1;
-  }
-  return selected;
-}
-
-function weeklyBossSelectionCount(keys) {
-  return keys.filter((key) => {
-    const familyId = key.slice(0, key.lastIndexOf('::'));
-    return !bossRecommendationSettings.bosses.some((boss) => (
-      boss.familyId === familyId && boss.cycle === 'monthly'
-    ));
-  }).length;
-}
-
-function limitBossKeysToWeeklyCap(keys) {
-  const families = new Set();
-  let weeklyCount = 0;
-  return keys.filter((key) => {
-    const familyId = key.slice(0, key.lastIndexOf('::'));
-    if (families.has(familyId)) return false;
-    families.add(familyId);
-    const isMonthly = bossRecommendationSettings.bosses.some((boss) => (
-      boss.familyId === familyId && boss.cycle === 'monthly'
-    ));
-    if (isMonthly) return true;
-    if (weeklyCount >= bossRecommendationSettings.maxBossesPerCharacter) return false;
-    weeklyCount += 1;
-    return true;
-  });
-}
-
 function summarizeBossParty(party, groupCharacters = []) {
   const boss = bossDetails(party.bossId);
   const members = party.members || [];
@@ -360,12 +258,14 @@ function summarizeBossParty(party, groupCharacters = []) {
   };
 }
 
-function readSchedulePreferences(email) {
-  try {
-    return JSON.parse(window.localStorage.getItem(`${schedulePreferencesKeyPrefix}${email.toLowerCase()}`) || '{}');
-  } catch {
-    return {};
-  }
+function characterBossClearStatus(character, boss) {
+  const matchingSchedules = (character.scheduler?.boss_contents || []).filter((item) => {
+    const option = scheduleBossOption(item);
+    return option.familyKey === boss.familyId && option.difficulty === boss.difficulty;
+  });
+  return matchingSchedules.some((item) => item.complete_flag === true || item.complete_flag === 'true')
+    ? '클리어'
+    : '미클리어';
 }
 
 function groupCharactersByWorld(characters) {
@@ -433,7 +333,6 @@ function App() {
   const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
   const [dragOverPartyId, setDragOverPartyId] = useState('');
   const [inviteLink, setInviteLink] = useState('');
-  const [schedulePreferences, setSchedulePreferences] = useState({});
   const [nexonKey, setNexonKey] = useState(readNexonApiKeyCookie);
   const [newGroupName, setNewGroupName] = useState('');
   const [busy, setBusy] = useState('');
@@ -852,44 +751,6 @@ function App() {
     if (!partyId) setView('bosses');
   }
 
-  function updateSchedulePreferences(ocid, updates) {
-    const next = {
-      ...schedulePreferences,
-      [ocid]: { ...schedulePreferences[ocid], ...updates },
-    };
-    setSchedulePreferences(next);
-    if (account?.email) {
-      try {
-        window.localStorage.setItem(`${schedulePreferencesKeyPrefix}${account.email.toLowerCase()}`, JSON.stringify(next));
-      } catch {
-        setNotice({ type: 'error', text: '미완료 일정 선택을 저장하지 못했습니다.' });
-      }
-    }
-  }
-
-  function updateScheduleTaskSelection(ocid, category, taskKey, enabled, displayedKeys) {
-    const saved = schedulePreferences[ocid]?.[category];
-    const selected = Array.isArray(saved) ? saved : displayedKeys;
-    const next = enabled
-      ? [...new Set([...selected, taskKey])]
-      : selected.filter((key) => key !== taskKey);
-    updateSchedulePreferences(ocid, { [category]: next });
-  }
-
-  function updateScheduleBossSelection(ocid, boss, enabled, displayedKeys) {
-    const selected = displayedKeys;
-    const familySelection = selected.find((key) => key.slice(0, key.lastIndexOf('::')) === boss.familyKey);
-    if (enabled && boss.cycle === 'weekly' && !familySelection
-      && weeklyBossSelectionCount(selected) >= bossRecommendationSettings.maxBossesPerCharacter) {
-      setNotice({ type: 'error', text: `캐릭터당 최대 ${bossRecommendationSettings.maxBossesPerCharacter}개 보스까지 선택할 수 있습니다.` });
-      return;
-    }
-    const next = enabled
-      ? [...selected.filter((key) => key.slice(0, key.lastIndexOf('::')) !== boss.familyKey), boss.key]
-      : selected.filter((key) => key !== boss.key);
-    updateSchedulePreferences(ocid, { bosses: next });
-  }
-
   async function copyGroupInvite() {
     if (!inviteLink) return;
     try {
@@ -952,7 +813,6 @@ function App() {
     setAccountMultipliers(multiplierResult.multipliers || []);
     setActiveCharacterIds(savedActiveCharacterIds);
     setSelectedCharacterId(savedActiveCharacterIds[0] || '');
-    setSchedulePreferences(readSchedulePreferences(profile.email));
     const inviteToken = new URLSearchParams(window.location.search).get('invite');
     let inviteGroupId = '';
     if (inviteToken) {
@@ -1498,6 +1358,7 @@ function App() {
     ));
   const unassignedRecommendations = new Map();
   const characterPartyAssignments = new Map();
+  const soloRecommendations = new Map();
   for (const character of activeCharacters) {
     const characterMultipliers = accountMultipliers.filter((entry) => (
       entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
@@ -1508,6 +1369,10 @@ function App() {
         .map(() => ({ ...party, boss: bossDetails(party.bossId) }))
     ));
     if (assignments.length) characterPartyAssignments.set(character.ocid, assignments);
+    const assignedBossIds = new Set(assignments.map(({ boss }) => boss.bossId));
+    const solo = recommendationsForCharacter(character, characterMultipliers, { includeSolo: true })
+      .filter((boss) => boss.recommendedPartySize === 1 && !assignedBossIds.has(boss.bossId));
+    if (solo.length) soloRecommendations.set(character.ocid, solo);
     const missing = recommendationsForCharacter(character, characterMultipliers)
       .filter((boss) => boss.recommendedPartySize > 1 && !assignments.some(({ boss: assignedBoss }) => (
         assignedBoss.bossId === boss.bossId
@@ -1652,13 +1517,13 @@ function App() {
               {isAssigned && (
                 <em className="group-character-quick-assignment-note">
                   {character.assignedParty.groupId === selectedGroupId
-                    ? '이미 편성됨'
-                    : '이미 편성됨'}
+                    ? '이미 그룹에 편성되어있습니다.'
+                    : '이미 다른 그룹에 편성되어있습니다.'}
                 </em>
               )}
               {sameAccountCharacterAssigned && (
                 <em className="group-character-quick-assignment-note">
-                  이미 편성됨
+                  이미 같은 계정의 캐릭터가 편성되어있습니다.
                 </em>
               )}
             </article>
@@ -1962,6 +1827,10 @@ function App() {
                             {worldCharacters.map((character) => {
                               const missingRecommendations = unassignedRecommendations.get(character.ocid) || [];
                               const assignedParties = characterPartyAssignments.get(character.ocid) || [];
+                              const characterSoloRecommendations = soloRecommendations.get(character.ocid) || [];
+                              const characterMultipliers = accountMultipliers.filter((entry) => (
+                                entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+                              ));
                               const groupCharacter = groupCharacters.find(({ ocid }) => ocid === character.ocid);
                               const canDragToParty = groupCharacter
                                 && (groupCharacter.ownerSub === account?.sub || selectedGroup?.role === 'admin');
@@ -1992,11 +1861,23 @@ function App() {
                                       </span>
                                     </span>
                                   </button>
-                                  <div className="character-card-side-info">
+                                  <div className="character-party-column" aria-label={`${character.nickname} 파티 보스`}>
                                     {assignedParties.length > 0 && (
                                       <div className="character-party-links" aria-label={`${character.nickname} 편성된 그룹 파티`}>
                                         {assignedParties.map((party) => {
                                           const boss = bossDetails(party.bossId);
+                                          const recommendation = bossRecommendationForCharacter(
+                                            character,
+                                            characterMultipliers,
+                                            boss,
+                                          );
+                                          const partyRecommendation = recommendation.recommendedPartySize
+                                            ? `${recommendationPartyLabel(recommendation.recommendedPartySize)} 추천`
+                                            : '불가능';
+                                          const multiplierLabel = recommendation.multiplier === null
+                                            ? '배율 미기록'
+                                            : `${recommendation.multiplier.toFixed(1)}%`;
+                                          const clearStatus = characterBossClearStatus(character, boss);
                                           return (
                                             <button
                                               className="character-party-link"
@@ -2004,8 +1885,17 @@ function App() {
                                               key={`${party.groupId}:${party.partyId}`}
                                               onClick={() => openPartyGroup(party.groupId, party.partyId)}
                                             >
-                                              {bossImageFor(boss.bossId) && <img src={bossImageFor(boss.bossId)} alt="" />}
-                                              {party.groupName} · {boss.difficultyLabel} {boss.name}
+                                              <span className="character-party-link-title">
+                                                {bossImageFor(boss.bossId) && <img src={bossImageFor(boss.bossId)} alt="" />}
+                                                {party.groupName} · {boss.difficultyLabel} {boss.name}
+                                              </span>
+                                              <span className="character-party-link-details">
+                                                <span>{multiplierLabel}</span>
+                                                <span>{partyRecommendation}</span>
+                                                <span className={`character-recommendation-clear ${clearStatus === '클리어' ? 'cleared' : 'not-cleared'}`}>
+                                                  {clearStatus}
+                                                </span>
+                                              </span>
                                             </button>
                                           );
                                         })}
@@ -2037,6 +1927,44 @@ function App() {
                                         ))}
                                       </div>
                                     )}
+                                    {!assignedParties.length && !missingRecommendations.length && (
+                                      <div className="character-recommendation-empty">편성된 파티 보스 없음</div>
+                                    )}
+                                  </div>
+                                  <div className="character-solo-column" aria-label={`${character.nickname} 솔플 보스`}>
+                                    {characterSoloRecommendations.length > 0 ? (
+                                      <div className="character-solo-recommendations">
+                                        <strong className="character-solo-recommendations-heading">솔플 추천</strong>
+                                        {characterSoloRecommendations.map((boss) => {
+                                          const clearStatus = characterBossClearStatus(character, boss);
+                                          const multiplierLabel = boss.multiplier === null
+                                            ? '배율 미기록'
+                                            : `${boss.multiplier.toFixed(1)}%`;
+                                          return (
+                                            <div
+                                              className="character-solo-recommendation"
+                                              data-boss-id={boss.bossId}
+                                              key={boss.bossId}
+                                            >
+                                              <span className="character-solo-recommendation-title">
+                                                {bossImageFor(boss.bossId)
+                                                  ? <img src={bossImageFor(boss.bossId)} alt="" loading="lazy" />
+                                                  : <span className="boss-placeholder" aria-hidden="true">◇</span>}
+                                                <strong>{boss.difficultyLabel} {boss.name}</strong>
+                                              </span>
+                                              <span className="character-solo-recommendation-details">
+                                                <span>{multiplierLabel}</span>
+                                                <span className={`character-recommendation-clear ${clearStatus === '클리어' ? 'cleared' : 'not-cleared'}`}>
+                                                  {clearStatus}
+                                                </span>
+                                              </span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="character-recommendation-empty">솔플 추천 보스 없음</div>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -2054,168 +1982,6 @@ function App() {
                         <button className="outline-button" type="button" onClick={() => setView('settings')}>계정 설정 열기</button>
                       </div>
                     )}
-                  </section>
-                  <section className="panel-section schedule-section my-schedule-section">
-                    <div className="section-heading">
-                      <div><p className="eyebrow">MY SCHEDULE</p><h2>내 캐릭터 미완료 일정</h2></div>
-                      <button
-                        className="icon-refresh-button"
-                        type="button"
-                        onClick={() => syncCharacters()}
-                        disabled={busy === 'sync' || !nexonKey.trim()}
-                        aria-label="일정 새로고침"
-                        title={nexonKey.trim() ? '일정 새로고침' : '계정 설정에서 Nexon API 키를 먼저 입력해 주세요'}
-                      >
-                        <span className={busy === 'sync' ? 'spinning' : ''} aria-hidden="true">↻</span>
-                      </button>
-                    </div>
-                    {!activeCharacters.length ? (
-                      <div className="empty-state compact"><strong>실사용 캐릭터가 선택되지 않았습니다</strong><p>계정 설정에서 일정 관리할 캐릭터를 선택하세요.</p></div>
-                    ) : (
-                      <div className="my-schedule-list">
-                        {activeCharacters.map((character) => {
-                          const scheduler = character.scheduler || {};
-                          const preferences = schedulePreferences[character.ocid] || {};
-                          const availableDaily = scheduler.daily_contents || [];
-                          const availableWeekly = scheduler.weekly_contents || [];
-                          const selectedDailyKeys = Array.isArray(preferences.daily)
-                            ? preferences.daily
-                            : registeredScheduleKeys(availableDaily);
-                          const selectedWeeklyKeys = Array.isArray(preferences.weekly)
-                            ? preferences.weekly
-                            : registeredScheduleKeys(availableWeekly);
-                          const availableBosses = [...new Map((scheduler.boss_contents || [])
-                            .map((item) => {
-                              const option = scheduleBossOption(item);
-                              return [option.key, { item, option }];
-                            })).values()]
-                            .filter(({ option }) => isDisplayedBossScheduleOption(option));
-                          const selectedBossKeys = Array.isArray(preferences.bosses)
-                            ? limitBossKeysToWeeklyCap(preferences.bosses.filter((key) => availableBosses.some(({ option }) => option.key === key)))
-                            : [];
-                          const selectedBosses = availableBosses
-                            .filter(({ option }) => selectedBossKeys.includes(option.key))
-                            .sort((left, right) => Number(isIncomplete(right.item, true)) - Number(isIncomplete(left.item, true))
-                              || bossFamilyOrder(left.option.familyKey) - bossFamilyOrder(right.option.familyKey)
-                              || (bossFamilyTopPrice[right.option.familyKey] || 0) - (bossFamilyTopPrice[left.option.familyKey] || 0));
-                          const characterMultipliers = accountMultipliers.filter((entry) => (
-                            entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
-                          ));
-                          const recommendedBosses = recommendationsForCharacter(character, characterMultipliers, { includeSolo: true });
-                          const recommendedBossIds = new Set(recommendedBosses.map(({ bossId }) => bossId));
-                          const scheduleBossGroups = [];
-                          for (const entry of availableBosses) {
-                            let family = scheduleBossGroups.find(({ familyKey }) => familyKey === entry.option.familyKey);
-                            if (!family) {
-                              family = { familyKey: entry.option.familyKey, name: entry.option.name, options: [] };
-                              scheduleBossGroups.push(family);
-                            }
-                            family.options.push(entry);
-                          }
-                          scheduleBossGroups.sort((left, right) => bossFamilyOrder(left.familyKey) - bossFamilyOrder(right.familyKey)
-                            || (bossFamilyTopPrice[right.familyKey] || 0) - (bossFamilyTopPrice[left.familyKey] || 0)
-                            || left.name.localeCompare(right.name, 'ko'));
-                          for (const family of scheduleBossGroups) family.options.sort(compareBossDifficulty);
-                          return (
-                            <article className="my-schedule-character" key={character.ocid}>
-                              <header className="my-schedule-character-heading">
-                                <span className="my-schedule-character-art">
-                                  {character.image
-                                    ? <img src={character.image} alt="" loading="lazy" />
-                                    : <span className="character-fallback small">{character.nickname.slice(0, 1)}</span>}
-                                </span>
-                                <div><strong>{character.nickname}</strong><small>Lv. {character.level || '-'}</small></div>
-                              </header>
-                              <div className="schedule-preferences schedule-boss-only" aria-label={`${character.nickname} 보스 선택`}>
-                                <details className="schedule-boss-picker">
-                                  <summary>{`주간 보스 ${weeklyBossSelectionCount(selectedBossKeys)}/${bossRecommendationSettings.maxBossesPerCharacter} · 월간 ${selectedBossKeys.length - weeklyBossSelectionCount(selectedBossKeys)}종`}</summary>
-                                    {availableBosses.length ? (
-                                    <div className="schedule-boss-options">
-                                        {scheduleBossGroups.map((family) => (
-                                          <section className="schedule-boss-family" key={family.familyKey}>
-                                            <header>
-                                              {family.options[0].option.bossId
-                                                && bossImageFor(family.options[0].option.bossId)
-                                                ? <img src={bossImageFor(family.options[0].option.bossId)} alt="" />
-                                                : <span className="boss-placeholder">◇</span>}
-                                              <strong>{family.name}</strong>
-                                            </header>
-                                            <div className="schedule-boss-difficulties">
-                                              {family.options.map(({ item, option }) => {
-                                                const selected = selectedBossKeys.includes(option.key);
-                                                const familySelection = selectedBossKeys.find((key) => key.slice(0, key.lastIndexOf('::')) === option.familyKey);
-                                                const atLimit = option.cycle === 'weekly' && !selected && !familySelection
-                                                  && weeklyBossSelectionCount(selectedBossKeys) >= bossRecommendationSettings.maxBossesPerCharacter;
-                                                const difficultySymbol = {
-                                                  easy: 'E',
-                                                  normal: 'N',
-                                                  hard: 'H',
-                                                  extreme: 'E',
-                                                  chaos: 'C',
-                                                }[option.difficulty] || option.difficultyLabel.slice(0, 1);
-                                                return (
-                                                  <label
-                                                    className={`schedule-boss-difficulty difficulty-${option.difficulty} ${selected ? 'selected' : ''} ${familySelection && !selected ? 'dimmed' : ''} ${recommendedBossIds.has(option.bossId) ? 'recommended' : ''}`}
-                                                    key={option.key}
-                                                    title={`${option.difficultyLabel}${recommendedBossIds.has(option.bossId) ? ' · 추천' : ''}`}
-                                                  >
-                                                    <input
-                                                      type="checkbox"
-                                                      aria-label={`${character.nickname} 보스 일정 ${option.difficultyLabel} ${option.name} 표시`}
-                                                      checked={selected}
-                                                      disabled={atLimit}
-                                                      onChange={(event) => updateScheduleBossSelection(character.ocid, option, event.target.checked, selectedBossKeys)}
-                                                    />
-                                                    <span aria-hidden="true">{difficultySymbol}</span>
-                                                    {recommendedBossIds.has(option.bossId) && <i className="difficulty-star" aria-hidden="true">★</i>}
-                                                  </label>
-                                                );
-                                              })}
-                                            </div>
-                                          </section>
-                                        ))}
-                                    </div>
-                                  ) : <p className="schedule-boss-empty">등록된 보스 일정이 없습니다.</p>}
-                                </details>
-                              </div>
-                              <div className="schedule-task-groups">
-                                <section className="schedule-task-group schedule-task-group-bosses" aria-label={`${character.nickname} 보스 일정`}>
-                                  <h3><span aria-hidden="true">⚔</span>보스<span>{selectedBosses.length}</span></h3>
-                                  <div className="schedule-tasks">
-                                    {selectedBosses.length ? selectedBosses.map(({ item, option }) => {
-                                      const recommendation = bossRecommendationForCharacter(character, characterMultipliers, option);
-                                      const sizeLabel = recommendation.recommendedPartySize
-                                        ? recommendation.recommendedPartySize === 1
-                                          ? '솔플 가능'
-                                          : recommendationPartyLabel(recommendation.recommendedPartySize)
-                                        : '불가능';
-                                      const multiplierLabel = recommendation.multiplier === null
-                                        ? '배율 미기록'
-                                        : `${recommendation.multiplier.toFixed(1)}%`;
-                                      const pending = isIncomplete(item, true);
-                                      const icon = bossImageFor(option.bossId);
-                                      return (
-                                        <span className={`boss-card ${pending ? 'pending' : 'completed'}`} key={option.key}>
-                                          {icon ? <img src={icon} alt="" loading="lazy" /> : <span className="boss-placeholder" aria-hidden="true">◇</span>}
-                                          <span className="boss-card-info">
-                                            <strong>{option.name || item.content_name}</strong>
-                                            <em className={`boss-card-difficulty difficulty-${option.difficulty}`}>{option.difficultyLabel || '-'}</em>
-                                            <small className={`boss-card-recommendation ${recommendation.recommendedPartySize ? `party-size-${recommendation.recommendedPartySize}` : 'impossible'}`}>
-                                              <strong>{sizeLabel}</strong><span>{multiplierLabel}</span>
-                                            </small>
-                                          </span>
-                                        </span>
-                                      );
-                                    }) : <span className="task-chip completed">보스를 선택하세요.</span>}
-                                  </div>
-                                </section>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <p className="privacy-note">표시할 일정 종류와 보스 선택은 캐릭터별로 저장됩니다. 보스는 캐릭터당 최대 12개, 같은 보스는 한 난이도만 선택할 수 있습니다.</p>
                   </section>
                 </>
               )}

@@ -444,16 +444,18 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByTitle('내 정보'));
   expect(screen.queryByRole('heading', { name: '실사용 캐릭터 2' })).toBeNull();
   expect(screen.queryByRole('searchbox', { name: '캐릭터 검색' })).toBeNull();
-  expect([...document.querySelectorAll('.my-schedule-character-heading strong')]
-    .map(({ textContent }) => textContent))
-    .toEqual(['오잉느', '아잉느']);
-  expect(document.querySelector('.my-schedule-character-art img')).not.toBeNull();
+  expect(document.querySelector('.my-schedule-section')).toBeNull();
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.getByRole('button', { name: /아잉느/ })).toBeDefined();
   expect(screen.queryByRole('button', { name: /최고레벨/ })).toBeNull();
   expect(screen.queryByRole('button', { name: /세번째/ })).toBeNull();
   expect(screen.getByText('72,807')).toBeDefined();
   const ownActiveCharacterWrap = screen.getByRole('button', { name: /오잉느/ }).closest('.character-card-wrap');
+  expect([...ownActiveCharacterWrap.children].map((child) => child.className)).toEqual([
+    expect.stringContaining('character-card'),
+    'character-party-column',
+    'character-solo-column',
+  ]);
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .toContain('카오스 감시자 칼로스');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
@@ -461,64 +463,25 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .not.toContain('검은 마법사');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning img')).not.toBeNull();
+  expect(screen.queryByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeNull();
+  const blackMageSoloRecommendation = ownActiveCharacterWrap.querySelector(
+    '.character-solo-recommendation[data-boss-id="hard_blackmage"]',
+  );
+  expect(blackMageSoloRecommendation.textContent).toContain('하드 검은 마법사');
+  expect(blackMageSoloRecommendation.textContent).toContain('100.0%');
+  expect(blackMageSoloRecommendation.querySelector('.character-recommendation-clear').textContent).toBe('클리어');
+  const secondActiveCharacterWrap = screen.getByRole('button', { name: /아잉느/ }).closest('.character-card-wrap');
+  const assumedSoloRecommendation = secondActiveCharacterWrap.querySelector('.character-solo-recommendation');
+  expect(assumedSoloRecommendation.textContent).toContain('배율 미기록');
+  expect(assumedSoloRecommendation.querySelector('.character-recommendation-clear').textContent).toBe('미클리어');
 
   fireEvent.change(screen.getByRole('combobox', { name: '월드 필터' }), { target: { value: '스카니아' } });
   expect(screen.getByRole('button', { name: /오잉느/ })).toBeDefined();
   expect(screen.queryByRole('button', { name: /아잉느/ })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: '필터 초기화' }));
 
-  fireEvent.click(screen.getAllByText(/^주간 보스 0\/12/)[0]);
-  [
-    '노말 시그너스',
-    '하드 힐라',
-    '노말 아카이럼',
-    '하드 반 레온',
-    '노말 카웅',
-    '노말 혼테일',
-    '노말 파풀라투스',
-    '노말 매그너스',
-    '이지 매그너스',
-    '노말 반반',
-    '노말 벨룸',
-    '노말 블러디퀸',
-    '노말 피에르',
-  ].forEach((boss) => {
-    expect(screen.queryByRole('checkbox', { name: `오잉느 보스 일정 ${boss} 표시` })).toBeNull();
-  });
-  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 하드 검은 마법사 표시' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 카오스 감시자 칼로스 표시' }));
-  const normalKalosSchedule = screen.getByRole('checkbox', { name: '오잉느 보스 일정 노말 감시자 칼로스 표시' });
-  expect(normalKalosSchedule.disabled).toBe(false);
-  fireEvent.click(normalKalosSchedule);
-  expect(normalKalosSchedule.checked).toBe(true);
-  expect(screen.getByRole('checkbox', { name: '오잉느 보스 일정 카오스 감시자 칼로스 표시' }).checked).toBe(false);
-  fireEvent.click(screen.getByRole('checkbox', { name: '오잉느 보스 일정 카오스 감시자 칼로스 표시' }));
-  for (let index = 1; index <= 11; index += 1) {
-    fireEvent.click(screen.getByRole('checkbox', { name: `오잉느 보스 일정 노말 테스트 보스 ${index} 표시` }));
-  }
-  const savedSchedulePreferences = JSON.parse(window.localStorage.getItem('maple-scout-schedule-preferences:member@example.test'));
-  expect(savedSchedulePreferences).toEqual({ 'ocid-1': { bosses: expect.arrayContaining(['blackmage::hard', 'kalos::chaos']) } });
-  expect(savedSchedulePreferences['ocid-1'].bosses.some((key) => key.startsWith('removed-boss-'))).toBe(false);
-  expect([...document.querySelectorAll('.schedule-boss-picker summary')]
-    .map(({ textContent }) => textContent)
-    .filter((text) => text.startsWith('주간 보스')))
-    .toEqual(['주간 보스 12/12 · 월간 1종', '주간 보스 0/12 · 월간 0종']);
-  expect(screen.getByRole('checkbox', { name: '오잉느 보스 일정 노말 테스트 보스 12 표시' }).disabled).toBe(true);
-  const completedBossCard = screen.getByText('검은 마법사', { selector: '.boss-card.completed strong' }).closest('.boss-card');
-  expect(completedBossCard.textContent).toContain('하드');
-  expect(completedBossCard.textContent).not.toContain('완료');
-  const kalosBossCard = screen.getByText('감시자 칼로스', { selector: '.boss-card.pending strong' }).closest('.boss-card');
-  expect(kalosBossCard.textContent).toContain('카오스');
-  expect(kalosBossCard.querySelector('.boss-card-recommendation').textContent).toContain('2인격 가능');
-  expect(kalosBossCard.querySelector('.boss-card-recommendation').classList.contains('party-size-2')).toBe(true);
-  expect(kalosBossCard.querySelector('.boss-card-recommendation').textContent).toContain('50.0%');
-  expect(completedBossCard.querySelector('.boss-card-recommendation').textContent).toContain('솔플');
-  expect(completedBossCard.querySelector('.boss-card-recommendation').classList.contains('party-size-1')).toBe(true);
-  expect(completedBossCard.querySelector('.boss-card-recommendation').textContent).toContain('100.0%');
-
   fireEvent.click(screen.getByRole('button', { name: /아잉느/ }));
   fireEvent.click(screen.getByTitle('Test group'));
-  await waitFor(() => expect(screen.queryByRole('heading', { name: '내 캐릭터 미완료 일정' })).toBeNull());
   expect(screen.queryByText('일일 퀘스트')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /인원 관리/ }));
   expect(screen.getByRole('heading', { name: 'Test group 인원 관리' })).toBeDefined();
@@ -646,6 +609,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(ownActiveCharacterWrapAfterAssignment.querySelector('.unassigned-party-warning').textContent).toContain('3인격 가능 추천');
   expect(ownActiveCharacterWrapAfterAssignment.querySelector('.character-party-link').textContent)
     .toContain('Test group · 카오스 감시자 칼로스');
+  const partyRecommendationDetails = ownActiveCharacterWrapAfterAssignment.querySelector('.character-party-link-details');
+  expect(partyRecommendationDetails.textContent).toContain('50.0%');
+  expect(partyRecommendationDetails.textContent).toContain('2인격 가능 추천');
+  expect(partyRecommendationDetails.textContent).toContain('미클리어');
   expect(screen.getByRole('button', { name: '실사용 2명 전체 갱신' })).toBeDefined();
   expect(screen.queryByText('보스380 헥사환산 기준으로 정렬')).toBeNull();
   fireEvent.click(screen.getByTitle('Test group'));

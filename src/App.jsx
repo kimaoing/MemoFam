@@ -332,8 +332,7 @@ function App() {
   const [selectedBossDifficultyId, setSelectedBossDifficultyId] = useState('');
   const [quickPartyBossId, setQuickPartyBossId] = useState('');
   const [selectedQuickCharacterKey, setSelectedQuickCharacterKey] = useState('');
-  const [quickRecommendedOnly, setQuickRecommendedOnly] = useState(true);
-  const [quickIncludeFullMultiplier, setQuickIncludeFullMultiplier] = useState(false);
+  const [quickPartySizeFilters, setQuickPartySizeFilters] = useState({ 3: true, 2: true, 1: false });
   const [partyWarningPopup, setPartyWarningPopup] = useState(null);
   const [activeBuilderPartyId, setActiveBuilderPartyId] = useState('');
   const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
@@ -1652,10 +1651,10 @@ function App() {
       || left.nickname.localeCompare(right.nickname, 'ko')
     ))
     .filter((character) => {
-      if (!quickRecommendedOnly || !selectedQuickPartyBoss) return true;
+      const activeSizes = Object.keys(quickPartySizeFilters).filter((size) => quickPartySizeFilters[size]).map(Number);
+      if (!selectedQuickPartyBoss || !activeSizes.length) return true;
       if (character.assignedParty) return false;
-      const partySize = character.quickRecommendation?.recommendedPartySize;
-      return partySize > 1 || (quickIncludeFullMultiplier && partySize === 1);
+      return activeSizes.includes(character.quickRecommendation?.recommendedPartySize);
     });
   const quickPartyCharacterGroups = quickPartyCandidates
     .reduce((groups, character) => {
@@ -1950,24 +1949,17 @@ function App() {
         </div>
         {selectedQuickPartyBoss && (
           <div className="group-character-quick-filters">
-            <button
-              className={quickRecommendedOnly ? 'active' : ''}
-              type="button"
-              aria-pressed={quickRecommendedOnly}
-              onClick={() => setQuickRecommendedOnly((value) => !value)}
-            >
-              파티 추천만 (미편성)
-            </button>
-            <button
-              className={quickIncludeFullMultiplier ? 'active' : ''}
-              type="button"
-              aria-pressed={quickIncludeFullMultiplier}
-              disabled={!quickRecommendedOnly}
-              title="추천 보기를 켠 상태에서 100% 이상 배율 캐릭터도 표시"
-              onClick={() => setQuickIncludeFullMultiplier((value) => !value)}
-            >
-              100% 이상도 보기
-            </button>
+            {[[3, '3인격 캐릭터'], [2, '2인격 캐릭터'], [1, '솔플 캐릭터']].map(([size, label]) => (
+              <button
+                className={quickPartySizeFilters[size] ? 'active' : ''}
+                type="button"
+                aria-pressed={quickPartySizeFilters[size]}
+                key={size}
+                onClick={() => setQuickPartySizeFilters((filters) => ({ ...filters, [size]: !filters[size] }))}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         )}
       </header>

@@ -808,10 +808,12 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     expect.objectContaining({ ocid: 'ocid-teammate-roster' }),
     expect.objectContaining({ ocid: 'ocid-1' }),
   ]));
-  const recommendedOnlyToggle = within(groupCharacterQuickMenu).getByRole('button', { name: '파티 추천만 (미편성)' });
-  expect(recommendedOnlyToggle.getAttribute('aria-pressed')).toBe('true');
-  expect(within(groupCharacterQuickMenu).getByRole('button', { name: '100% 이상도 보기' }).getAttribute('aria-pressed')).toBe('false');
-  fireEvent.click(recommendedOnlyToggle);
+  const quickFilterButton = (name) => within(groupCharacterQuickMenu).getByRole('button', { name });
+  expect(quickFilterButton('3인격 캐릭터').getAttribute('aria-pressed')).toBe('true');
+  expect(quickFilterButton('2인격 캐릭터').getAttribute('aria-pressed')).toBe('true');
+  expect(quickFilterButton('솔플 캐릭터').getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(quickFilterButton('3인격 캐릭터'));
+  fireEvent.click(quickFilterButton('2인격 캐릭터'));
   await waitFor(() => expect(groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card.already-assigned')).toHaveLength(2));
   const quickCharacterCards = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')];
   const assignedQuickCharacterCards = quickCharacterCards.filter((card) => card.classList.contains('already-assigned'));

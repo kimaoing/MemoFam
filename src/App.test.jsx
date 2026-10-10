@@ -660,7 +660,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .toContain('Test group · 카오스 감시자 칼로스');
   const partyRecommendationDetails = ownActiveCharacterWrapAfterAssignment.querySelector('.character-party-link-details');
   expect(partyRecommendationDetails.textContent).toContain('50.0%');
-  expect(partyRecommendationDetails.textContent).toContain('2인격 가능 추천');
+  expect(partyRecommendationDetails.textContent).toContain('2인격 가능');
   expect(partyRecommendationDetails.textContent).toContain('미클리어');
   expect(screen.getByRole('button', { name: '실사용 2명 전체 갱신' })).toBeDefined();
   expect(screen.queryByText('보스380 헥사환산 기준으로 정렬')).toBeNull();

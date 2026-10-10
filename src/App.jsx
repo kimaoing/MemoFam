@@ -1728,7 +1728,7 @@ function App() {
                             : <span className="boss-placeholder" aria-hidden="true">◇</span>}
                           <span>
                             <strong>{boss.difficultyLabel} {boss.name}</strong>
-                            <small>{recommendationPartyLabel(boss.recommendedPartySize)} 추천 · 배율 {boss.multiplier.toFixed(1)}%</small>
+                            <small>{recommendationPartyLabel(boss.recommendedPartySize)} · 배율 {boss.multiplier.toFixed(1)}%</small>
                           </span>
                         </span>
                       </button>
@@ -2092,7 +2092,7 @@ function App() {
                                             boss,
                                           );
                                           const partyRecommendation = recommendation.recommendedPartySize
-                                            ? `${recommendationPartyLabel(recommendation.recommendedPartySize)} 추천`
+                                            ? `${recommendationPartyLabel(recommendation.recommendedPartySize)}`
                                             : '불가능';
                                           const multiplierLabel = recommendation.multiplier === null
                                             ? '배율 미기록'

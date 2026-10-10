@@ -1774,7 +1774,14 @@ function App() {
             title={`보스 빠른 메뉴 ${bossQuickMenuCollapsed ? '펼치기' : '접기'}`}
             onClick={() => setBossQuickMenuCollapsed((collapsed) => !collapsed)}
           >
-            {bossQuickMenuCollapsed ? '→' : '←'}
+            <svg
+              className="sidebar-edge-chevron"
+              data-direction={bossQuickMenuCollapsed ? 'right' : 'left'}
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+            >
+              <path d={bossQuickMenuCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} />
+            </svg>
           </button>
         </div>
       </header>
@@ -1924,7 +1931,14 @@ function App() {
             title={`캐릭터 빠른 메뉴 ${characterQuickMenuCollapsed ? '펼치기' : '접기'}`}
             onClick={() => setCharacterQuickMenuCollapsed((collapsed) => !collapsed)}
           >
-            {characterQuickMenuCollapsed ? '←' : '→'}
+            <svg
+              className="sidebar-edge-chevron"
+              data-direction={characterQuickMenuCollapsed ? 'left' : 'right'}
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+            >
+              <path d={characterQuickMenuCollapsed ? 'm15 18-6-6 6-6' : 'm9 18 6-6-6-6'} />
+            </svg>
           </button>
         </div>
       </header>
@@ -2001,7 +2015,14 @@ function App() {
           title={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
           onClick={() => setServerRailCollapsed((collapsed) => !collapsed)}
         >
-          {serverRailCollapsed ? '→' : '←'}
+          <svg
+            className="sidebar-edge-chevron"
+            data-direction={serverRailCollapsed ? 'right' : 'left'}
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+          >
+            <path d={serverRailCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} />
+          </svg>
         </button>
         <button
           className={`rail-button my-info-button ${view === 'characters' ? 'active' : ''}`}

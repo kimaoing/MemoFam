@@ -324,6 +324,7 @@ function App() {
     belowTarget: false,
     uncleared: false,
   });
+  const [partyRemovalConfirmationId, setPartyRemovalConfirmationId] = useState('');
   const [showGroupDeleteConfirmation, setShowGroupDeleteConfirmation] = useState(false);
   const [memberRemovalEmail, setMemberRemovalEmail] = useState('');
   const [focusedPartyId, setFocusedPartyId] = useState('');
@@ -609,6 +610,20 @@ function App() {
     if (focusedPartyId === partyId) setFocusedPartyId('');
     if (activeBuilderPartyId === partyId) setActiveBuilderPartyId('');
     setNotice({ type: 'success', text: '파티 삭제를 임시 저장했습니다. 완료를 누르면 파티와 편성이 삭제됩니다.' });
+  }
+
+  function requestPartyRemoval(party) {
+    if (quickPartyBossId && focusedPartyId === party.partyId) {
+      setQuickPartyBossId('');
+      return;
+    }
+    setPartyRemovalConfirmationId(party.partyId);
+  }
+
+  function confirmPartyRemoval() {
+    if (!partyRemovalConfirmationId) return;
+    removePartyDraft(partyRemovalConfirmationId);
+    setPartyRemovalConfirmationId('');
   }
 
   function createEmptyBossParty(boss) {
@@ -2311,6 +2326,7 @@ function App() {
                                 const sameBossPartyNumber = currentGroupParties
                                   .filter(({ bossId }) => bossId === party.bossId)
                                   .findIndex(({ partyId }) => partyId === party.partyId) + 1;
+                                const isSelectedParty = quickPartyBossId && focusedPartyId === party.partyId;
                                 const canDeleteParty = selectedGroup.role === 'admin'
                                   || members.every(({ ownerSub }) => ownerSub === account?.sub);
                                 return (
@@ -2361,9 +2377,9 @@ function App() {
                                         <button
                                           className="party-remove-button"
                                           type="button"
-                                          aria-label={`${config.difficultyLabel} ${config.name} ${sameBossPartyNumber}번째 파티 삭제`}
-                                          title="파티 삭제"
-                                          onClick={() => removePartyDraft(party.partyId)}
+                                          aria-label={`${config.difficultyLabel} ${config.name} ${sameBossPartyNumber}번째 파티 ${isSelectedParty ? '편성 닫기' : '삭제'}`}
+                                          title={isSelectedParty ? '파티 편성 닫기' : '파티 삭제'}
+                                          onClick={() => requestPartyRemoval(party)}
                                         >×</button>
                                       )}
                                     </header>
@@ -2421,6 +2437,36 @@ function App() {
                             <p className="group-main-party-empty-state">아직 편성된 파티가 없습니다. 위에서 보스 난이도를 선택해 파티를 만들어 보세요.</p>
                           )}
                         </section>
+                        {partyRemovalConfirmationId && (() => {
+                          const partyToRemove = currentGroupParties.find(({ partyId }) => partyId === partyRemovalConfirmationId);
+                          if (!partyToRemove) return null;
+                          const partyToRemoveDetails = bossDetails(partyToRemove.bossId);
+                          const partyNumber = currentGroupParties
+                            .filter(({ bossId }) => bossId === partyToRemove.bossId)
+                            .findIndex(({ partyId }) => partyId === partyToRemove.partyId) + 1;
+                          return (
+                            <div className="party-removal-backdrop">
+                              <section
+                                className="party-removal-dialog"
+                                role="dialog"
+                                aria-modal="true"
+                                aria-labelledby="party-removal-title"
+                              >
+                                <span className="party-removal-icon" aria-hidden="true">!</span>
+                                <h3 id="party-removal-title">파티를 삭제할까요?</h3>
+                                <p>{partyToRemoveDetails.difficultyLabel} {partyToRemoveDetails.name} {partyNumber}번째 파티와 파티 편성이 삭제됩니다. 이 변경은 저장 전까지 취소할 수 있습니다.</p>
+                                <div>
+                                  <button
+                                    className="outline-button"
+                                    type="button"
+                                    onClick={() => setPartyRemovalConfirmationId('')}
+                                  >취소</button>
+                                  <button className="logout-danger-button" type="button" onClick={confirmPartyRemoval}>파티 삭제</button>
+                                </div>
+                              </section>
+                            </div>
+                          );
+                        })()}
                         {selectedQuickPartyBoss && (
                           <section className="group-quick-party-editor" aria-label={`${selectedQuickPartyBoss.name} 파티 편성 후보`}>
                             <header className="group-quick-party-editor-heading">

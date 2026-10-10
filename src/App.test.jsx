@@ -740,7 +740,20 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .querySelector('.difficulty-star')).toBeNull();
   const partyCountBeforeDelete = document.querySelectorAll('.group-main-party-card').length;
   const partyCommitCountBeforeDelete = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
-  fireEvent.click(within(populatedKalosPartyAfterFiltering).getByRole('button', { name: /번째 파티 삭제/ }));
+  fireEvent.click(within(populatedKalosPartyAfterFiltering).getByRole('button', { name: /번째 파티 편성 닫기/ }));
+  expect(document.querySelector('.group-quick-party-editor')).toBeNull();
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(partyCountBeforeDelete);
+  let partyCardForRemoval = [...document.querySelectorAll('.group-main-party-card')]
+    .find((card) => card.textContent.includes('그룹동료'));
+  fireEvent.click(within(partyCardForRemoval).getByRole('button', { name: /번째 파티 삭제/ }));
+  expect(screen.getByRole('dialog', { name: '파티를 삭제할까요?' })).not.toBeNull();
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(partyCountBeforeDelete);
+  fireEvent.click(screen.getByRole('button', { name: '취소' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  partyCardForRemoval = [...document.querySelectorAll('.group-main-party-card')]
+    .find((card) => card.textContent.includes('그룹동료'));
+  fireEvent.click(within(partyCardForRemoval).getByRole('button', { name: /번째 파티 삭제/ }));
+  fireEvent.click(screen.getByRole('button', { name: '파티 삭제' }));
   expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(partyCountBeforeDelete - 1);
   expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(partyCommitCountBeforeDelete);
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));

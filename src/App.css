@@ -16,7 +16,7 @@ button { cursor: pointer; }
 a { color: inherit; }
 
 .app-shell { display: flex; min-height: 100vh; background: #f4f5f8; }
-.server-rail { position: sticky; top: 0; display: flex; width: 86px; height: 100vh; min-height: 100vh; flex: 0 0 86px; flex-direction: column; align-items: center; gap: 9px; padding: 12px 0 10px; background: #20232e; }
+.server-rail { position: sticky; top: 0; display: flex; width: 86px; height: 100vh; min-height: 100vh; flex: 0 0 86px; flex-direction: column; align-items: center; gap: 9px; padding: 12px 0 10px; background: #20232e; transition: width .28s cubic-bezier(.2, .75, .25, 1), flex-basis .28s cubic-bezier(.2, .75, .25, 1), padding .28s ease, min-height .28s ease; }
 .sidebar-edge-toggle { position: absolute; z-index: 20; top: 50%; display: grid; width: 28px; height: 44px; place-items: center; padding: 0; border: 1px solid #51596d; background: #292d3a; color: #e4e6ef; font-size: 22px; font-weight: 700; line-height: 1; transform: translateY(-50%); }
 .sidebar-edge-toggle:hover { background: #3a4052; color: #fff; }
 .server-rail-toggle { right: -12px; border-radius: 8px 0 0 8px; }
@@ -347,7 +347,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-boss-family-option > img, .group-boss-family-option > .boss-placeholder { width: 48px; height: 48px; object-fit: contain; }
 .group-boss-family-option > strong { color: #343949; font-size: 15px; }
 .group-boss-difficulty-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
-.group-boss-quick-menu { position: sticky; z-index: 2; top: 0; display: flex; width: 270px; height: 100vh; max-height: 100vh; flex: 0 0 270px; flex-direction: column; align-self: flex-start; gap: 12px; overflow: visible; padding: 16px 10px 12px; border-right: 1px solid #343847; background: #20232e; color: #e4e6ef; }
+.group-boss-quick-menu { position: sticky; z-index: 2; top: 0; display: flex; width: 270px; height: 100vh; max-height: 100vh; flex: 0 0 270px; flex-direction: column; align-self: flex-start; gap: 12px; overflow: visible; padding: 16px 10px 12px; border-right: 1px solid #343847; background: #20232e; color: #e4e6ef; transition: width .28s cubic-bezier(.2, .75, .25, 1), flex-basis .28s cubic-bezier(.2, .75, .25, 1), padding .28s ease, max-height .28s ease; }
 .group-boss-quick-menu.collapsed { width: 54px; flex-basis: 54px; padding: 12px 6px; }
 .group-boss-quick-menu.collapsed > header { padding: 0; border: 0; }
 .group-boss-quick-menu.collapsed > header .group-quick-menu-heading > div,
@@ -420,7 +420,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-quick-party-editor-heading p:last-child { margin: 0; color: #7a8190; font-size: 13px; line-height: 1.5; }
 .group-quick-party-editor-heading > img { width: 52px; height: 52px; object-fit: contain; }
 .group-quick-party-editor .group-quick-roster { margin-top: 0; }
-.group-character-quick-menu { position: sticky; top: 0; display: flex; width: 390px; height: 100vh; max-height: 100vh; flex: 0 0 390px; flex-direction: column; gap: 10px; overflow: visible; padding: 14px; border-left: 1px solid #dfe3ec; background: #fff; }
+.group-character-quick-menu { position: sticky; top: 0; display: flex; width: 390px; height: 100vh; max-height: 100vh; flex: 0 0 390px; flex-direction: column; gap: 10px; overflow: visible; padding: 14px; border-left: 1px solid #dfe3ec; background: #fff; transition: width .28s cubic-bezier(.2, .75, .25, 1), flex-basis .28s cubic-bezier(.2, .75, .25, 1), padding .28s ease, max-height .28s ease; }
 .group-character-quick-menu.collapsed { width: 58px; flex-basis: 58px; padding: 12px 6px; }
 .group-character-quick-menu.collapsed > header { padding: 0; border: 0; }
 .group-character-quick-menu.collapsed > header .group-quick-menu-heading > div,
@@ -766,8 +766,8 @@ button:disabled { cursor: wait; opacity: .65; }
   .server-rail { position: sticky; z-index: 10; top: 0; width: 100%; height: auto; min-height: 66px; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; gap: 6px; overflow-x: hidden; padding: 7px 11px; border-radius: 0; }
   .server-rail-toggle { top: 50%; right: 4px; }
   .server-rail.collapsed { width: 100%; min-height: 52px; flex-basis: auto; align-items: center; }
-  .group-boss-quick-menu.collapsed { width: 100%; height: auto; max-height: none; flex-basis: auto; padding: 8px 10px; }
-  .group-character-quick-menu.collapsed { width: 100%; height: auto; max-height: none; flex-basis: auto; padding: 8px 12px; border-top: 1px solid #dfe3ec; border-left: 0; }
+  .group-boss-quick-menu.collapsed { width: 100%; height: auto; max-height: 58px; flex-basis: auto; padding: 8px 10px; }
+  .group-character-quick-menu.collapsed { width: 100%; height: auto; max-height: 62px; flex-basis: auto; padding: 8px 12px; border-top: 1px solid #dfe3ec; border-left: 0; }
   .group-boss-quick-menu.collapsed > header,
   .group-character-quick-menu.collapsed > header { padding: 0; border: 0; }
   .group-boss-quick-menu.collapsed > header .group-quick-menu-heading > div,
@@ -778,7 +778,10 @@ button:disabled { cursor: wait; opacity: .65; }
   .group-boss-quick-menu.collapsed .group-quick-menu-heading,
   .group-character-quick-menu.collapsed .group-quick-menu-heading { align-items: center; }
   .group-boss-quick-menu { position: relative; width: 100%; height: auto; max-height: 290px; flex: 0 0 auto; gap: 8px; padding: 10px; border-right: 0; border-bottom: 1px solid #343847; }
-  .group-character-quick-menu { position: relative; max-height: 390px; padding: 12px; }
+  .group-boss-quick-menu { overflow: hidden; }
+  .group-boss-quick-menu > .sidebar-edge-toggle { right: 0; }
+  .group-character-quick-menu { position: relative; max-height: 390px; overflow: hidden; padding: 12px; }
+  .group-character-quick-menu > .sidebar-edge-toggle { left: 0; }
   .group-boss-quick-menu > header { padding: 0 3px 7px; }
   .group-boss-quick-menu > header h2 { display: inline-block; margin-right: 9px; }
   .group-boss-quick-menu > header p:last-child { display: inline-block; }
@@ -1221,4 +1224,10 @@ html[data-theme='light'] body { background: #f4f5f8; }
 
 @media (max-width: 380px) {
   .schedule-tasks:has(.boss-card) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .server-rail,
+  .group-boss-quick-menu,
+  .group-character-quick-menu { transition-duration: .01ms; }
 }

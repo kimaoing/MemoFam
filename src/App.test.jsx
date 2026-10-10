@@ -600,6 +600,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     ['POST', 'PUT', 'DELETE'].includes(method)
       && (path.endsWith('/parties') || path.includes('/party-characters/'))
   )).length;
+  expect(groupmateQuickCard.querySelector('.group-character-quick-add-button').parentElement)
+    .toBe(groupmateQuickCard);
   fireEvent.click(within(groupmateQuickCard).getByRole('button', { name: '파티에 추가' }));
   expect(assignedCharacters.has('ocid-teammate-roster')).toBe(false);
   const ownCharacterQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
@@ -778,10 +780,12 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const partyCardsBeforeQuickAdd = document.querySelectorAll('.group-main-party-card').length;
   fireEvent.click(blackMageRecommendationButton);
   expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(partyCardsBeforeQuickAdd + 1);
-  expect([...document.querySelectorAll('.group-main-party-card')].some((card) => (
+  const quickAddedBlackMageParty = [...document.querySelectorAll('.group-main-party-card')].find((card) => (
     card.textContent.includes('검은 마법사')
       && card.querySelector('.party-difficulty-mark')?.title === '하드'
-  ))).toBe(true);
+  ));
+  expect(quickAddedBlackMageParty).toBeDefined();
+  expect(quickAddedBlackMageParty.querySelector('.group-main-party-members').textContent).toContain('그룹동료');
   fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
 
   fireEvent.click(screen.getByTitle('내 정보'));

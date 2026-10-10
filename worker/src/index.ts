@@ -432,6 +432,7 @@ async function createGroup(env: Env, principal: GooglePrincipal, body: Record<st
     env.DB.prepare(`INSERT INTO group_members (group_id, email, role, joined_at) VALUES (?, ?, 'admin', ?)`)
       .bind(groupId, principal.email, now),
   ]);
+  await syncActiveCharactersToGroups(env, principal, await activeCharacterOcids(env, principal), groupId);
   return json({ id: groupId, name, mainImageBossId: null }, 201);
 }
 
@@ -556,6 +557,51 @@ async function getCharacterSelection(env: Env, principal: GooglePrincipal): Prom
   return json({ ocids: Array.isArray(ocids) ? ocids.filter((ocid) => typeof ocid === 'string') : [] });
 }
 
+async function activeCharacterOcids(env: Env, principal: GooglePrincipal): Promise<string[]> {
+  const preference = await env.DB.prepare(`
+    SELECT active_character_ocids_json AS ocidsJson
+    FROM character_preferences WHERE google_sub = ?
+  `).bind(principal.sub).first<{ ocidsJson: string }>();
+  try {
+    const ocids: unknown = JSON.parse(preference?.ocidsJson || '[]');
+    return Array.isArray(ocids)
+      ? [...new Set(ocids.filter((ocid): ocid is string => typeof ocid === 'string' && ocid.length <= 80))]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function syncActiveCharactersToGroups(
+  env: Env,
+  principal: GooglePrincipal,
+  ocids: string[],
+  groupId?: string,
+): Promise<void> {
+  if (!ocids.length) return;
+  const groupFilter = groupId ? 'AND gm.group_id = ?' : '';
+  const placeholders = ocids.map(() => '?').join(', ');
+  await env.DB.prepare(`
+    INSERT INTO group_characters (group_id, google_sub, owner_email, nickname, added_at)
+    SELECT gm.group_id, c.google_sub, gm.email, c.nickname, ?
+    FROM group_members gm
+    JOIN characters c ON c.google_sub = ? AND c.ocid IN (${placeholders})
+    WHERE lower(gm.email) = lower(?) ${groupFilter}
+      AND c.character_level >= 260
+      AND NOT EXISTS (
+        SELECT 1 FROM group_character_exclusions gce
+        WHERE gce.group_id = gm.group_id AND gce.google_sub = c.google_sub AND gce.ocid = c.ocid
+      )
+    ON CONFLICT (group_id, google_sub, nickname) DO NOTHING
+  `).bind(
+    new Date().toISOString(),
+    principal.sub,
+    ...ocids,
+    principal.email,
+    ...(groupId ? [groupId] : []),
+  ).run();
+}
+
 async function saveCharacterSelection(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
   if (Object.keys(body).some((key) => key !== 'ocids') || !Array.isArray(body.ocids) || body.ocids.length > 200
     || body.ocids.some((ocid) => typeof ocid !== 'string' || ocid.length > 80)) {
@@ -580,6 +626,7 @@ async function saveCharacterSelection(env: Env, principal: GooglePrincipal, body
       active_character_ocids_json = excluded.active_character_ocids_json,
       updated_at = excluded.updated_at
   `).bind(principal.sub, JSON.stringify(ocids), new Date().toISOString()).run();
+  await syncActiveCharactersToGroups(env, principal, ocids);
   return json({ ocids });
 }
 
@@ -676,11 +723,20 @@ async function acceptGroupInvite(env: Env, principal: GooglePrincipal, body: Rec
   `).bind(hash).first<{ groupId: string; expiresAt: string; name: string }>();
   if (!invite) throw new ApiError(404, '초대 링크를 찾을 수 없습니다.');
   if (invite.expiresAt <= new Date().toISOString()) throw new ApiError(410, '초대 링크가 만료되었습니다.');
+  const existingMember = await env.DB.prepare(`
+    SELECT 1 FROM group_members WHERE group_id = ? AND lower(email) = lower(?)
+  `).bind(invite.groupId, principal.email).first();
   await env.DB.prepare(`
     INSERT INTO group_members (group_id, email, role, joined_at)
     VALUES (?, ?, 'member', ?)
     ON CONFLICT (group_id, email) DO NOTHING
   `).bind(invite.groupId, principal.email, new Date().toISOString()).run();
+  if (!existingMember) {
+    await env.DB.prepare(`
+      DELETE FROM group_character_exclusions WHERE group_id = ? AND google_sub = ?
+    `).bind(invite.groupId, principal.sub).run();
+  }
+  await syncActiveCharactersToGroups(env, principal, await activeCharacterOcids(env, principal), invite.groupId);
   return json({ groupId: invite.groupId, groupName: invite.name, joined: true });
 }
 
@@ -798,11 +854,16 @@ async function addGroupCharacter(env: Env, groupId: string, principal: GooglePri
   `).bind(principal.sub, ocid).first<{ nickname: string; level: number }>();
   if (!character) throw new ApiError(403, '본인이 인증한 캐릭터만 그룹에 추가할 수 있습니다.');
   if (character.level < 260) throw new ApiError(400, '260레벨 이상 캐릭터만 그룹에 추가할 수 있습니다.');
-  await env.DB.prepare(`
-    INSERT INTO group_characters (group_id, google_sub, owner_email, nickname, added_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT (group_id, google_sub, nickname) DO NOTHING
-  `).bind(group.id, principal.sub, principal.email, character.nickname, new Date().toISOString()).run();
+  await env.DB.batch([
+    env.DB.prepare(`
+      DELETE FROM group_character_exclusions WHERE group_id = ? AND google_sub = ? AND ocid = ?
+    `).bind(group.id, principal.sub, ocid),
+    env.DB.prepare(`
+      INSERT INTO group_characters (group_id, google_sub, owner_email, nickname, added_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (group_id, google_sub, nickname) DO NOTHING
+    `).bind(group.id, principal.sub, principal.email, character.nickname, new Date().toISOString()),
+  ]);
   return json({ nickname: character.nickname, ocid, added: true }, 201);
 }
 
@@ -820,9 +881,16 @@ async function removeGroupCharacter(env: Env, groupId: string, principal: Google
   if (character.ownerSub !== principal.sub && group.role !== 'admin') {
     throw new ApiError(403, '본인 캐릭터 또는 그룹 관리자만 제거할 수 있습니다.');
   }
-  await env.DB.prepare(`
-    DELETE FROM group_characters WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
-  `).bind(group.id, character.ownerSub, character.nickname).run();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO group_character_exclusions (group_id, google_sub, ocid, excluded_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (group_id, google_sub, ocid) DO NOTHING
+    `).bind(group.id, character.ownerSub, ocid, new Date().toISOString()),
+    env.DB.prepare(`
+      DELETE FROM group_characters WHERE group_id = ? AND google_sub = ? AND lower(nickname) = lower(?)
+    `).bind(group.id, character.ownerSub, character.nickname),
+  ]);
   return json({ ocid, removed: true });
 }
 

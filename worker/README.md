@@ -127,7 +127,9 @@ GET /api/health와 POST /api/auth/google 외 보호된 요청에는 Worker가 �
 | `POST` | `/api/characters/maplescouter-import` | 보스380 헥사 점수와 캐릭터 소유 보스 배율을 검증해 저장 |
 | `GET` | `/api/characters/multipliers` | 로그인 계정의 캐릭터 소유 배율 전체 조회 |
 | `GET` | `/api/groups` | 로그인 사용자가 속한 그룹 목록 |
-| `POST` | `/api/groups` | D1에 그룹 생성, 요청 사용자를 관리자 지정 |
+| `POST` | `/api/groups` | D1에 그룹 생성, 요청 사용자를 관리자 지정 및 사용 캐릭터 자동 참여 |
+| `POST` | `/api/group-invites/accept` | 초대 수락, 현재 사용 캐릭터를 그룹에 자동 참여 |
+| `PUT` | `/api/characters/selection` | 사용 캐릭터 저장 및 참여 중인 그룹에 자동 추가 |
 | `PATCH` | `/api/groups/:id` | 그룹 관리자의 대표 이미지 설정 |
 | `DELETE` | `/api/groups/:id` | 그룹과 종속 파티/참여 데이터 삭제 |
 | `POST` | `/api/groups/:id/members` | 그룹 관리자가 이메일 멤버 추가 |
@@ -140,6 +142,8 @@ GET /api/health와 POST /api/auth/google 외 보호된 요청에는 Worker가 �
 | `PUT` | `/api/groups/:id/parties/commit` | 파티 추가·이동·삭제 초안 전체를 검증한 뒤 D1 batch로 한 번에 저장 |
 
 캐릭터 동기화 요청에는 Nexon API 키만 전달합니다. Worker는 캐릭터 목록에서 260레벨 이상인 캐릭터만 기본 정보와 스케줄러 현황을 조회해 Google 계정에 연결하고, API 키는 저장하지 않습니다. Nexon API 요청은 동기화 요청 안에서 초당 최대 5회가 되도록 간격을 두고 전송합니다. 기본 정보 조회에 실패한 캐릭터는 해당 동기화에서 건너뛰지만, 이미 저장된 캐릭터 정보는 삭제하지 않습니다. 스케줄러 조회에 실패해도 기본 정보가 있는 캐릭터는 등록하며, 스케줄 정보만 비워 둡니다. 캐릭터 기본 정보는 별도 조회 기준일 없이 가져오며, 스케줄러는 Nexon API의 `/maplestory/v1/scheduler/character-state` 응답을 사용합니다. 최신 현황이 필요하면 API 키를 다시 입력해 동기화합니다.
+
+그룹 초대 수락 시 저장된 사용 캐릭터를 해당 그룹에 참여시키고, 이후 사용 캐릭터 선택을 저장할 때도 참여 중인 모든 그룹에 자동 추가합니다. 그룹 설정에서 캐릭터를 제거하면 `group_character_exclusions`에 제외 기록을 남겨 이후 선택 저장으로 다시 추가되지 않게 합니다. 사용자가 그룹 설정에서 직접 다시 참여시키면 제외 기록을 해제합니다.
 
 캐릭터 화면에서 MapleScouter 자동 갱신을 실행하면 사용자 브라우저의 확장이 결과를 읽고 앱이 이를 `POST /api/characters/maplescouter-import`로 전송합니다. 점수는 `/api/characters` 응답에 포함되며, 배율은 `/api/characters/multipliers`에서 조회할 수 있습니다. 로그인 사용자가 소유한 캐릭터라면 그룹 가입 여부와 관계없이 보스 배율을 저장합니다.
 
@@ -177,9 +181,11 @@ npm run typecheck
 npx wrangler deploy --dry-run
 ```
 
-## 캐릭터 배율 및 그룹 설정 migration (최신)
+## 캐릭터 배율 및 그룹 캐릭터 자동 참여 migration
 
 `0010_character_multipliers_and_group_settings.sql`부터 보스 배율은 그룹이 아닌 인증 캐릭터에 귀속됩니다. 이 migration은 기존 `multipliers` 전체를 그룹 삭제에 영향받지 않는 `legacy_group_multipliers` archive로 복사하고, 그룹 캐릭터 또는 저장된 로그인 세션 이메일로 소유자를 식별할 수 있는 값만 `character_multipliers`로 옮깁니다. 같은 캐릭터/보스에 여러 그룹 값이 있으면 가장 최근 `updated_at`을 사용합니다. 소유자를 확인하지 못한 기존 값은 legacy 테이블에 남으므로 필요 시 확인할 수 있습니다.
+
+`0011_group_character_exclusions.sql`은 사용자가 그룹에서 직접 제거한 캐릭터가 이후 사용 캐릭터 동기화에 의해 자동 재참여하지 않도록 제외 기록을 저장합니다.
 
 새 배율 가져오기 요청에는 그룹 ID를 보내지 않습니다.
 
@@ -198,4 +204,4 @@ npx wrangler deploy --dry-run
 `GET /api/characters/multipliers`는 현재 로그인 계정이 소유한 전체 캐릭터 배율을 돌려줍니다. `GET /api/groups/:id/multipliers`는 그룹 참여 캐릭터의 소유 배율만 조회하며, 그룹별 저장/동기화 API는 제공하지 않습니다.
 `PATCH /api/groups/:id`는 관리자 전용 대표 이미지 설정, `DELETE /api/groups/:id`는 관리자 전용 그룹 삭제입니다. 그룹 이미지 값은 이미지 자산을 매칭할 보스 ID입니다.
 
-운영 DB에 수동 적용할 경우 현재 적용된 migration을 확인하고 `0009_persistent_auth_sessions.sql` 다음에 `0010_character_multipliers_and_group_settings.sql` 내용을 실행합니다. 실행이 완전히 성공한 후에만 migration 파일명을 `d1_migrations`에 기록하세요. Wrangler 인증이 되는 개발 환경에서는 `npm run db:migrate:remote`를 이용하면 순서와 기록을 Wrangler가 처리합니다. 이 작업 후 Worker를 배포합니다.
+운영 DB에 수동 적용할 경우 현재 적용된 migration을 확인하고 `0010_character_multipliers_and_group_settings.sql` 다음에 `0011_group_character_exclusions.sql` 내용을 실행합니다. 실행이 완전히 성공한 후에만 migration 파일명을 `d1_migrations`에 기록하세요. Wrangler 인증이 되는 개발 환경에서는 `npm run db:migrate:remote`를 이용하면 순서와 기록을 Wrangler가 처리합니다. 이 작업 후 Worker를 배포합니다.

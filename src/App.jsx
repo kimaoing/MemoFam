@@ -626,14 +626,18 @@ function App() {
     setPartyRemovalConfirmationId('');
   }
 
-  function createEmptyBossParty(boss) {
+  function createEmptyBossParty(boss, character = null) {
     if (!selectedGroupId) return;
+    if (character && character.ownerSub !== account?.sub && selectedGroup?.role !== 'admin') {
+      setNotice({ type: 'error', text: '본인 캐릭터 또는 그룹 관리자만 파티를 편성할 수 있습니다.' });
+      return;
+    }
     const partyId = crypto.randomUUID();
     updatePartyDraft((parties) => [...parties, {
       partyId,
       bossId: boss.bossId,
       familyId: boss.familyId,
-      members: [],
+      members: character ? [partyMemberFromCharacter(character, boss.bossId)] : [],
       createdAt: new Date().toISOString(),
     }]);
     setSelectedBossFamilyId(boss.familyId);
@@ -641,7 +645,12 @@ function App() {
     setFocusedPartyId(partyId);
     setActiveBuilderPartyId(partyId);
     setQuickPartyBossId(boss.bossId);
-    setNotice({ type: 'success', text: '빈 파티를 임시로 추가했습니다. 완료를 눌러 반영하세요.' });
+    setNotice({
+      type: 'success',
+      text: character
+        ? `${character.nickname}을(를) 포함한 새 파티를 임시로 추가했습니다. 완료를 눌러 반영하세요.`
+        : '빈 파티를 임시로 추가했습니다. 완료를 눌러 반영하세요.',
+    });
   }
 
   function quickAssignCharacter(character) {
@@ -833,6 +842,12 @@ function App() {
     const inviteToken = new URLSearchParams(window.location.search).get('invite');
     let inviteGroupId = '';
     if (inviteToken) {
+      if (!selectionResult && savedActiveCharacterIds.length) {
+        await workerRequest(token, '/api/characters/selection', {
+          method: 'PUT',
+          body: JSON.stringify({ ocids: savedActiveCharacterIds }),
+        });
+      }
       const joined = await workerRequest(token, '/api/group-invites/accept', {
         method: 'POST',
         body: JSON.stringify({ token: inviteToken }),
@@ -1457,6 +1472,11 @@ function App() {
       ));
       return {
         ...character,
+        hasPartyAssignment: partiesAcrossGroups.some((party) => (
+          (party.members || []).some(({ ownerSub, ocid }) => (
+            ownerSub === character.ownerSub && ocid === character.ocid
+          ))
+        )),
         quickMultiplier: selectedQuickPartyBoss
           ? getCharacterBossMultiplier(character, selectedQuickPartyBoss.bossId)
           : 0,
@@ -1479,7 +1499,7 @@ function App() {
       };
     })
     .sort((left, right) => (
-      (Number(Boolean(left.assignedParty)) - Number(Boolean(right.assignedParty)))
+      (Number(left.hasPartyAssignment) - Number(right.hasPartyAssignment))
       || (selectedQuickPartyBoss ? right.quickMultiplier - left.quickMultiplier : 0)
       || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
       || (Number(right.level) || 0) - (Number(left.level) || 0)
@@ -1693,17 +1713,6 @@ function App() {
                     )}
                   </span>
                 )}
-                {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={busy === 'party-save' || !focusedQuickParty}
-                    title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
-                    onClick={() => quickAssignCharacter(character)}
-                  >
-                    파티에 추가
-                  </button>
-                )}
               </div>
               {character.missingPartyRecommendations.length > 0 && (
                 <div
@@ -1719,7 +1728,7 @@ function App() {
                         aria-label={`${boss.difficultyLabel} ${boss.name} 그룹 파티 추가`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          createEmptyBossParty(boss);
+                          createEmptyBossParty(boss, character);
                         }}
                       >
                         <span className="unassigned-party-boss">
@@ -1735,6 +1744,20 @@ function App() {
                     </div>
                   ))}
                 </div>
+              )}
+              {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
+                <button
+                  className="primary-button group-character-quick-add-button"
+                  type="button"
+                  disabled={busy === 'party-save' || !focusedQuickParty}
+                  title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    quickAssignCharacter(character);
+                  }}
+                >
+                  파티에 추가
+                </button>
               )}
             </article>
           );
@@ -2617,14 +2640,17 @@ function App() {
                         <div>
                           <p className="eyebrow">GROUP SETTINGS</p>
                           <h2>{selectedGroup.name}</h2>
-                          <p>{selectedGroup.role === 'admin' ? '관리자 설정 및 그룹 캐릭터 관리' : '그룹에 참여할 캐릭터를 관리합니다'}</p>
+                          <p>
+                            {selectedGroup.role === 'admin' && '관리자 설정을 관리합니다. '}
+                            사용 캐릭터는 그룹에 자동 참여하며, 여기서 제거하면 자동 재참여하지 않습니다. 원할 때 참여 버튼으로 다시 추가할 수 있습니다.
+                          </p>
                         </div>
                         <button className="outline-button" type="button" onClick={() => setView('group')}>← 그룹 메인으로</button>
                       </section>
 
                       <section className="group-character-picker panel-section">
                         <div className="section-heading">
-                          <div><p className="eyebrow">ADD YOUR CHARACTERS</p><h2>그룹에 참여시킬 캐릭터</h2></div>
+                          <div><p className="eyebrow">GROUP CHARACTERS</p><h2>그룹 참여 캐릭터</h2></div>
                           <span className="updated-count">사용 또는 그룹 참여 캐릭터 {groupSettingsCharacters.length}명</span>
                         </div>
                         {groupSettingsCharacters.length ? (

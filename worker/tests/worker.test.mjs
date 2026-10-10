@@ -208,6 +208,7 @@ test('persists active character selection per Google account and rejects unowned
   const ownedOcids = ['ocid-1', 'ocid-2'];
   let savedSelection = '[]';
   let savedValues;
+  let syncedCharactersQuery = '';
   globalThis.fetch = async () => Response.json({
     sub: 'google-subject', email: 'member@example.test', email_verified: true,
   });
@@ -216,8 +217,12 @@ test('persists active character selection per Google account and rejects unowned
       first: async () => query.includes('FROM character_preferences') ? { ocidsJson: savedSelection } : null,
       all: async () => ({ results: values.slice(1).filter((ocid) => ownedOcids.includes(ocid)).map((ocid) => ({ ocid })) }),
       run: async () => {
-        savedValues = values;
-        savedSelection = values[1];
+        if (query.includes('INSERT INTO character_preferences')) {
+          savedValues = values;
+          savedSelection = values[1];
+        } else if (query.includes('INSERT INTO group_characters')) {
+          syncedCharactersQuery = query;
+        }
         return { success: true };
       },
     }),
@@ -233,6 +238,8 @@ test('persists active character selection per Google account and rejects unowned
     assert.deepEqual(await saveResponse.json(), { ocids: ['ocid-1', 'ocid-2'] });
     assert.equal(savedValues[0], 'google-subject');
     assert.equal(savedValues[1], '["ocid-1","ocid-2"]');
+    assert.match(syncedCharactersQuery, /group_character_exclusions/);
+    assert.match(syncedCharactersQuery, /character_level >= 260/);
 
     const getResponse = await request('GET');
     assert.deepEqual(await getResponse.json(), { ocids: ['ocid-1', 'ocid-2'] });
@@ -581,6 +588,8 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
   const originalPrepare = env.DB.prepare;
   let insertedInvite;
   let insertedMember;
+  let syncedCharactersQuery = '';
+  let hadMembership = false;
   globalThis.fetch = async () => Response.json({
     sub: 'google-subject',
     email: 'member@example.test',
@@ -600,11 +609,14 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
         if (query.includes('FROM group_invites')) {
           return { groupId: 'group-1', name: 'Test group', expiresAt: insertedInvite[4] };
         }
+        if (query.includes('FROM character_preferences')) return { ocidsJson: '["ocid-1"]' };
+        if (query.includes('FROM group_members WHERE group_id')) return hadMembership ? { 1: 1 } : null;
         return null;
       },
       run: async () => {
         if (query.includes('INSERT INTO group_invites')) insertedInvite = values;
         if (query.includes('INSERT INTO group_members')) insertedMember = values;
+        if (query.includes('INSERT INTO group_characters')) syncedCharactersQuery = query;
         return { success: true };
       },
     }),
@@ -628,6 +640,7 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
     assert.equal(acceptResponse.status, 200);
     assert.deepEqual(await acceptResponse.json(), { groupId: 'group-1', groupName: 'Test group', joined: true });
     assert.deepEqual(insertedMember.slice(0, 2), ['group-1', 'member@example.test']);
+    assert.match(syncedCharactersQuery, /group_character_exclusions/);
   } finally {
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;
@@ -637,7 +650,8 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
 test('adds only owned level-260-or-higher characters to a group roster', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;
-  const statements = [];
+  const originalBatch = env.DB.batch;
+  let batches = [];
   globalThis.fetch = async () => Response.json({
     sub: 'google-subject', email: 'member@example.test', email_verified: true,
   });
@@ -646,9 +660,11 @@ test('adds only owned level-260-or-higher characters to a group roster', async (
       first: async () => query.includes('FROM groups g JOIN group_members')
         ? { id: 'group-1', name: 'Test group', created_by_sub: 'google-subject', created_by_email: 'member@example.test', role: 'admin' }
         : query.includes('FROM characters') ? { nickname: '오잉느', level: 280 } : null,
-      run: async () => { statements.push({ query, values }); return { success: true }; },
+      query,
+      values,
     }),
   });
+  env.DB.batch = async (statements) => { batches.push(statements); };
   try {
     const response = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1/characters', {
       method: 'POST',
@@ -657,11 +673,51 @@ test('adds only owned level-260-or-higher characters to a group roster', async (
     }), env);
     assert.equal(response.status, 201);
     assert.deepEqual(await response.json(), { nickname: '오잉느', ocid: 'ocid-1', added: true });
-    assert.equal(statements[0].query.includes('INSERT INTO group_characters'), true);
-    assert.deepEqual(statements[0].values.slice(0, 4), ['group-1', 'google-subject', 'member@example.test', '오잉느']);
+    assert.equal(batches[0][0].query.includes('DELETE FROM group_character_exclusions'), true);
+    assert.equal(batches[0][1].query.includes('INSERT INTO group_characters'), true);
+    assert.deepEqual(batches[0][1].values.slice(0, 4), ['group-1', 'google-subject', 'member@example.test', '오잉느']);
   } finally {
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;
+    env.DB.batch = originalBatch;
+  }
+});
+
+test('removing a character from a group persists an automatic rejoin exclusion', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalPrepare = env.DB.prepare;
+  const originalBatch = env.DB.batch;
+  let removalBatch;
+  globalThis.fetch = async () => Response.json({
+    sub: 'google-subject', email: 'member@example.test', email_verified: true,
+  });
+  env.DB.prepare = (query) => ({
+    bind: (...values) => ({
+      first: async () => query.includes('FROM groups g JOIN group_members')
+        ? { id: 'group-1', name: 'Test group', created_by_sub: 'other-subject', created_by_email: 'owner@example.test', role: 'member' }
+        : query.includes('FROM group_characters gc JOIN characters c')
+          ? { ownerSub: 'google-subject', nickname: '오잉느' }
+          : null,
+      query,
+      values,
+    }),
+  });
+  env.DB.batch = async (statements) => { removalBatch = statements; };
+  try {
+    const response = await worker.fetch(new Request('https://worker.example.test/api/groups/group-1/characters', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer test-google-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ocid: 'ocid-1' }),
+    }), env);
+    assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+    assert.deepEqual(await response.json(), { ocid: 'ocid-1', removed: true });
+    assert.match(removalBatch[0].query, /INSERT INTO group_character_exclusions/);
+    assert.deepEqual(removalBatch[0].values.slice(0, 3), ['group-1', 'google-subject', 'ocid-1']);
+    assert.match(removalBatch[1].query, /DELETE FROM group_characters/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.DB.prepare = originalPrepare;
+    env.DB.batch = originalBatch;
   }
 });
 

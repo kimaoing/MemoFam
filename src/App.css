@@ -436,7 +436,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .group-character-quick-card.blocked-by-account { border-color: #d99b9f; background: #fff5f5; cursor: not-allowed; }
 .group-character-quick-card.already-assigned .group-character-quick-avatar > img,
 .group-character-quick-card.blocked-by-account .group-character-quick-avatar > img { filter: saturate(.6); }
-.group-character-quick-profile > button { width: 100%; min-height: 32px; grid-column: 1 / -1; padding: 0 5px; font-size: 12px; }
+.group-character-quick-add-button { min-width: 112px; min-height: 32px; grid-column: 1 / -1; justify-self: end; padding: 0 12px; font-size: 12px; }
 .group-character-quick-profile > .group-character-quick-statuses { grid-column: 1 / -1; }
 .group-character-quick-missing { min-width: 0; gap: 5px; padding: 7px; font-size: 11px; }
 .group-character-quick-missing > strong { gap: 4px; font-size: 11px; }

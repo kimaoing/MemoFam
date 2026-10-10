@@ -332,6 +332,8 @@ function App() {
   const [selectedBossDifficultyId, setSelectedBossDifficultyId] = useState('');
   const [quickPartyBossId, setQuickPartyBossId] = useState('');
   const [selectedQuickCharacterKey, setSelectedQuickCharacterKey] = useState('');
+  const [quickRecommendedOnly, setQuickRecommendedOnly] = useState(true);
+  const [quickIncludeFullMultiplier, setQuickIncludeFullMultiplier] = useState(false);
   const [partyWarningPopup, setPartyWarningPopup] = useState(null);
   const [activeBuilderPartyId, setActiveBuilderPartyId] = useState('');
   const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
@@ -1648,7 +1650,13 @@ function App() {
       || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
       || (Number(right.level) || 0) - (Number(left.level) || 0)
       || left.nickname.localeCompare(right.nickname, 'ko')
-    ));
+    ))
+    .filter((character) => {
+      if (!quickRecommendedOnly || !selectedQuickPartyBoss) return true;
+      if (character.assignedParty) return false;
+      const partySize = character.quickRecommendation?.recommendedPartySize;
+      return partySize > 1 || (quickIncludeFullMultiplier && partySize === 1);
+    });
   const quickPartyCharacterGroups = quickPartyCandidates
     .reduce((groups, character) => {
       const ownerEmail = character.ownerEmail?.toLocaleLowerCase('ko') || '';
@@ -1940,6 +1948,28 @@ function App() {
             </svg>
           </button>
         </div>
+        {selectedQuickPartyBoss && (
+          <div className="group-character-quick-filters">
+            <button
+              className={quickRecommendedOnly ? 'active' : ''}
+              type="button"
+              aria-pressed={quickRecommendedOnly}
+              onClick={() => setQuickRecommendedOnly((value) => !value)}
+            >
+              파티 추천만 (미편성)
+            </button>
+            <button
+              className={quickIncludeFullMultiplier ? 'active' : ''}
+              type="button"
+              aria-pressed={quickIncludeFullMultiplier}
+              disabled={!quickRecommendedOnly}
+              title="추천 보기를 켠 상태에서 100% 이상 배율 캐릭터도 표시"
+              onClick={() => setQuickIncludeFullMultiplier((value) => !value)}
+            >
+              100% 이상도 보기
+            </button>
+          </div>
+        )}
       </header>
       <div className="group-character-quick-list">
         {quickPartyCharacterGroups.map(({ key, ownerName, characters: ownerCharacters }) => (
@@ -2602,7 +2632,7 @@ function App() {
                                   || members.every(({ ownerSub }) => ownerSub === account?.sub);
                                 return (
                                   <article
-                                    className={`group-main-party-card ${summary.cleared ? 'boss-cleared' : 'boss-not-cleared'} ${focusedPartyId === party.partyId ? 'focused' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
+                                    className={`group-main-party-card ${summary.cleared ? 'boss-cleared' : 'boss-not-cleared'} ${focusedPartyId === party.partyId ? 'focused' : ''} ${isSelectedParty ? 'selected-party' : ''} ${quickPartyBossId && !isSelectedParty ? 'unselected-party' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
                                     id={`group-party-${party.partyId}`}
                                     key={party.partyId}
                                     onClick={(event) => {
@@ -2621,6 +2651,7 @@ function App() {
                                     }}
                                     onDrop={(event) => dropCharacterOnParty(event, party)}
                                   >
+                                    {isSelectedParty && <span className="group-main-party-selected-badge">✓ 편성 중</span>}
                                     <header>
                                       {bossImageFor(party.bossId)
                                         ? <img src={bossImageFor(party.bossId)} alt="" />

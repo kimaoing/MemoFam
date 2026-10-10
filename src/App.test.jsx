@@ -455,6 +455,9 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     expect.stringContaining('character-card'),
     'character-card-side-info',
   ]);
+  expect([...ownActiveCharacterWrap.querySelector('.character-card-side-info').children]
+    .map((child) => child.className))
+    .toEqual(['character-party-column', 'character-solo-column']);
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .toContain('카오스 감시자 칼로스');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)

@@ -2629,7 +2629,7 @@ function App() {
                                   || members.every(({ ownerSub }) => ownerSub === account?.sub);
                                 return (
                                   <article
-                                    className={`group-main-party-card ${summary.cleared ? 'boss-cleared' : 'boss-not-cleared'} ${focusedPartyId === party.partyId ? 'focused' : ''} ${isSelectedParty ? 'selected-party' : ''} ${quickPartyBossId && !isSelectedParty ? 'unselected-party' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
+                                    className={`group-main-party-card ${summary.cleared ? 'boss-cleared' : 'boss-not-cleared'} ${focusedPartyId === party.partyId ? 'focused' : ''} ${isSelectedParty ? 'selected-party' : ''} ${quickPartyBossId && !isSelectedParty && summary.cleared ? 'unselected-party' : ''} ${dragOverPartyId === party.partyId ? 'drag-over' : ''}`}
                                     id={`group-party-${party.partyId}`}
                                     key={party.partyId}
                                     onClick={(event) => {

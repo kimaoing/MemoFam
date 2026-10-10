@@ -1767,14 +1767,14 @@ function App() {
             <p>난이도를 누르면 빈 파티가 추가됩니다.</p>
           </div>
           <button
-            className="quick-menu-toggle"
+            className="sidebar-edge-toggle"
             type="button"
             aria-label={`보스 빠른 메뉴 ${bossQuickMenuCollapsed ? '펼치기' : '접기'}`}
             aria-expanded={!bossQuickMenuCollapsed}
             title={`보스 빠른 메뉴 ${bossQuickMenuCollapsed ? '펼치기' : '접기'}`}
             onClick={() => setBossQuickMenuCollapsed((collapsed) => !collapsed)}
           >
-            {bossQuickMenuCollapsed ? '펼치기' : '접기'}
+            {bossQuickMenuCollapsed ? '→' : '←'}
           </button>
         </div>
       </header>
@@ -1917,14 +1917,14 @@ function App() {
             <p>{selectedQuickPartyBoss ? '파티 카드로 드래그해 편성하고, 퀵메뉴나 빈 공간에 놓아 제외하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
           </div>
           <button
-            className="quick-menu-toggle"
+            className="sidebar-edge-toggle"
             type="button"
             aria-label={`캐릭터 빠른 메뉴 ${characterQuickMenuCollapsed ? '펼치기' : '접기'}`}
             aria-expanded={!characterQuickMenuCollapsed}
             title={`캐릭터 빠른 메뉴 ${characterQuickMenuCollapsed ? '펼치기' : '접기'}`}
             onClick={() => setCharacterQuickMenuCollapsed((collapsed) => !collapsed)}
           >
-            {characterQuickMenuCollapsed ? '펼치기' : '접기'}
+            {characterQuickMenuCollapsed ? '←' : '→'}
           </button>
         </div>
       </header>
@@ -1994,14 +1994,14 @@ function App() {
     >
       <aside className={`server-rail ${serverRailCollapsed ? 'collapsed' : ''}`} aria-label="내 정보와 그룹">
         <button
-          className="server-rail-toggle"
+          className="sidebar-edge-toggle server-rail-toggle"
           type="button"
           aria-label={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
           aria-expanded={!serverRailCollapsed}
           title={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
           onClick={() => setServerRailCollapsed((collapsed) => !collapsed)}
         >
-          {serverRailCollapsed ? '☰' : '×'}
+          {serverRailCollapsed ? '→' : '←'}
         </button>
         <button
           className={`rail-button my-info-button ${view === 'characters' ? 'active' : ''}`}

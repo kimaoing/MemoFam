@@ -583,7 +583,7 @@ test('adds a group boss to D1', async () => {
   }
 });
 
-test('creates hashed seven-day group invites and accepts them for authenticated users', async () => {
+test('creates hashed seven-day group invites, previews membership, and accepts them', async () => {
   const originalFetch = globalThis.fetch;
   const originalPrepare = env.DB.prepare;
   let insertedInvite;
@@ -615,7 +615,10 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
       },
       run: async () => {
         if (query.includes('INSERT INTO group_invites')) insertedInvite = values;
-        if (query.includes('INSERT INTO group_members')) insertedMember = values;
+        if (query.includes('INSERT INTO group_members')) {
+          insertedMember = values;
+          hadMembership = true;
+        }
         if (query.includes('INSERT INTO group_characters')) syncedCharactersQuery = query;
         return { success: true };
       },
@@ -632,6 +635,21 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
     assert.notEqual(insertedInvite[0], invite.token);
     assert.equal(new Date(invite.expiresAt).getTime() - new Date(insertedInvite[3]).getTime(), 7 * 24 * 60 * 60 * 1000);
 
+    const previewResponse = await worker.fetch(new Request('https://worker.example.test/api/group-invites/preview', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer preview-test-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: invite.token }),
+    }), env);
+    const previewResult = await previewResponse.json();
+    assert.equal(previewResponse.status, 200, JSON.stringify(previewResult));
+    assert.deepEqual(previewResult, {
+      groupId: 'group-1',
+      groupName: 'Test group',
+      alreadyJoined: false,
+      expiresAt: invite.expiresAt,
+    });
+    assert.equal(insertedMember, undefined);
+
     const acceptResponse = await worker.fetch(new Request('https://worker.example.test/api/group-invites/accept', {
       method: 'POST',
       headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
@@ -641,6 +659,14 @@ test('creates hashed seven-day group invites and accepts them for authenticated 
     assert.deepEqual(await acceptResponse.json(), { groupId: 'group-1', groupName: 'Test group', joined: true });
     assert.deepEqual(insertedMember.slice(0, 2), ['group-1', 'member@example.test']);
     assert.match(syncedCharactersQuery, /group_character_exclusions/);
+
+    const alreadyJoinedResponse = await worker.fetch(new Request('https://worker.example.test/api/group-invites/accept', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer repeat-accept-test-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: invite.token }),
+    }), env);
+    assert.equal(alreadyJoinedResponse.status, 200);
+    assert.deepEqual(await alreadyJoinedResponse.json(), { groupId: 'group-1', groupName: 'Test group', joined: false });
   } finally {
     globalThis.fetch = originalFetch;
     env.DB.prepare = originalPrepare;

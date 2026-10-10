@@ -332,10 +332,15 @@ function App() {
   const [selectedBossDifficultyId, setSelectedBossDifficultyId] = useState('');
   const [quickPartyBossId, setQuickPartyBossId] = useState('');
   const [selectedQuickCharacterKey, setSelectedQuickCharacterKey] = useState('');
+  const [partyWarningPopup, setPartyWarningPopup] = useState(null);
   const [activeBuilderPartyId, setActiveBuilderPartyId] = useState('');
   const [draggedPartyCharacter, setDraggedPartyCharacter] = useState(null);
   const [dragOverPartyId, setDragOverPartyId] = useState('');
+  const [serverRailCollapsed, setServerRailCollapsed] = useState(() => window.innerWidth <= 560);
+  const [bossQuickMenuCollapsed, setBossQuickMenuCollapsed] = useState(() => window.innerWidth <= 560);
+  const [characterQuickMenuCollapsed, setCharacterQuickMenuCollapsed] = useState(() => window.innerWidth <= 560);
   const [inviteLink, setInviteLink] = useState('');
+  const [invitePrompt, setInvitePrompt] = useState(null);
   const [nexonKey, setNexonKey] = useState(readNexonApiKeyCookie);
   const [newGroupName, setNewGroupName] = useState('');
   const [busy, setBusy] = useState('');
@@ -353,6 +358,22 @@ function App() {
   const mapleScouterRequest = useRef(null);
   const mapleScouterTimeout = useRef(null);
   const characterSelectionSaveQueue = useRef(Promise.resolve());
+
+  useEffect(() => {
+    const closePopup = (event) => {
+      if (event.target.closest?.('.group-party-warning-popup, .group-party-warning-trigger')) return;
+      setPartyWarningPopup(null);
+    };
+    const closePopupOnEscape = (event) => {
+      if (event.key === 'Escape') setPartyWarningPopup(null);
+    };
+    document.addEventListener('click', closePopup);
+    window.addEventListener('keydown', closePopupOnEscape);
+    return () => {
+      document.removeEventListener('click', closePopup);
+      window.removeEventListener('keydown', closePopupOnEscape);
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -440,7 +461,7 @@ function App() {
     setBusy('invite');
     try {
       const result = await workerRequest(accessToken, `/api/groups/${encodeURIComponent(selectedGroupId)}/invites`, { method: 'POST' });
-      const inviteUrl = new URL(window.location.pathname, window.location.origin);
+      const inviteUrl = new URL('/', window.location.origin);
       inviteUrl.searchParams.set('invite', result.token);
       setInviteLink(inviteUrl.toString());
       setNotice({ type: 'success', text: `초대 링크를 만들었습니다. ${new Date(result.expiresAt).toLocaleString('ko-KR')}까지 유효합니다.` });
@@ -836,6 +857,81 @@ function App() {
     }
   }
 
+  async function previewGroupInvite(token, authToken) {
+    try {
+      const invitation = await workerRequest(authToken, '/api/group-invites/preview', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      });
+      return { ...invitation, token };
+    } catch (error) {
+      return { token, error: error.message || '초대 정보를 불러오지 못했습니다.' };
+    }
+  }
+
+  async function retryGroupInvitePreview() {
+    if (!invitePrompt?.token) return;
+    setBusy('invite-preview');
+    try {
+      setInvitePrompt(await previewGroupInvite(invitePrompt.token, accessToken));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function joinInvitedGroup() {
+    if (!invitePrompt?.token || !accessToken) return;
+    setBusy('invite-accept');
+    try {
+      await workerRequest(accessToken, '/api/characters/selection', {
+        method: 'PUT',
+        body: JSON.stringify({ ocids: activeCharacterIds }),
+      });
+      const joined = await workerRequest(accessToken, '/api/group-invites/accept', {
+        method: 'POST',
+        body: JSON.stringify({ token: invitePrompt.token }),
+      });
+      const refreshedGroups = await workerRequest(accessToken, '/api/groups');
+      const savedGroups = refreshedGroups.groups || [];
+      setGroups(savedGroups);
+      setSelectedGroupId(joined.groupId);
+      setView('group');
+      setInvitePrompt(null);
+      await Promise.all([
+        loadGroupData(accessToken, joined.groupId),
+        loadAllGroupPartyData(accessToken, savedGroups),
+      ]);
+      setNotice({
+        type: 'success',
+        text: joined.joined === false
+          ? `이미 ${joined.groupName} 그룹에 참여한 상태입니다.`
+          : `${joined.groupName} 그룹에 참가했습니다.`,
+      });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function openInvitedGroup() {
+    if (!invitePrompt?.groupId) return;
+    setBusy('invite-accept');
+    try {
+      setSelectedGroupId(invitePrompt.groupId);
+      setView('group');
+      await Promise.all([
+        loadGroupData(accessToken, invitePrompt.groupId),
+        loadAllGroupPartyData(accessToken),
+      ]);
+      setInvitePrompt(null);
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function finishSignIn(token, profile, silent = false) {
     const [groupResult, characterResult, selectionResult, multiplierResult] = await Promise.all([
       workerRequest(token, '/api/groups'),
@@ -860,38 +956,28 @@ function App() {
     setActiveCharacterIds(savedActiveCharacterIds);
     setSelectedCharacterId(savedActiveCharacterIds[0] || '');
     const inviteToken = new URLSearchParams(window.location.search).get('invite');
-    let inviteGroupId = '';
+    let invitation = null;
     if (inviteToken) {
-      if (!selectionResult && savedActiveCharacterIds.length) {
-        await workerRequest(token, '/api/characters/selection', {
-          method: 'PUT',
-          body: JSON.stringify({ ocids: savedActiveCharacterIds }),
-        });
+      invitation = await previewGroupInvite(inviteToken, token);
+      window.history.replaceState({}, '', `${window.location.origin}/`);
+      if (invitation?.alreadyJoined) {
+        setSelectedGroupId(invitation.groupId);
+        setView('group');
       }
-      const joined = await workerRequest(token, '/api/group-invites/accept', {
-        method: 'POST',
-        body: JSON.stringify({ token: inviteToken }),
-      });
-      inviteGroupId = joined.groupId;
-      const refreshedGroups = await workerRequest(token, '/api/groups');
-      savedGroups = refreshedGroups.groups || [];
-      setGroups(savedGroups);
-      setNotice({ type: 'success', text: `${joined.groupName} 그룹에 참가했습니다.` });
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete('invite');
-      window.history.replaceState({}, '', cleanUrl.toString());
     }
     setGroups(savedGroups);
-    const initialGroupId = inviteGroupId || savedGroups[0]?.id || '';
+    const initialGroupId = invitation?.alreadyJoined
+      ? invitation.groupId
+      : savedGroups[0]?.id || '';
     setSelectedGroupId(initialGroupId);
-    if (inviteGroupId) setView('group');
     await Promise.all([
       loadGroupData(token, initialGroupId),
       loadAllGroupPartyData(token, savedGroups),
     ]);
     setAccessToken(token);
     setAccount({ email: profile.email, name: profile.name, sub: profile.sub });
-    if (!silent && !inviteGroupId) setNotice({ type: 'success', text: `${profile.email} 계정으로 연결했습니다.` });
+    if (invitation) setInvitePrompt(invitation);
+    if (!silent && !inviteToken) setNotice({ type: 'success', text: `${profile.email} 계정으로 연결했습니다.` });
   }
 
   async function signIn() {
@@ -1671,12 +1757,26 @@ function App() {
       : `실사용 ${activeCharacters.length}명 전체 갱신`;
   const toggleTheme = () => setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   const groupBossQuickMenu = selectedGroup && (
-    <aside className="group-boss-quick-menu" aria-label="보스 빠른 편성">
+    <aside className={`group-boss-quick-menu ${bossQuickMenuCollapsed ? 'collapsed' : ''}`} aria-label="보스 빠른 편성">
       <header>
-        <p className="eyebrow">PARTY QUICK MENU</p>
-        <h2>보스 빠른 편성</h2>
-        <p className="group-boss-quick-group">{selectedGroup.name}</p>
-        <p>난이도를 누르면 빈 파티가 추가됩니다.</p>
+        <div className="group-quick-menu-heading">
+          <div>
+            <p className="eyebrow">PARTY QUICK MENU</p>
+            <h2>보스 빠른 편성</h2>
+            <p className="group-boss-quick-group">{selectedGroup.name}</p>
+            <p>난이도를 누르면 빈 파티가 추가됩니다.</p>
+          </div>
+          <button
+            className="quick-menu-toggle"
+            type="button"
+            aria-label={`보스 빠른 메뉴 ${bossQuickMenuCollapsed ? '펼치기' : '접기'}`}
+            aria-expanded={!bossQuickMenuCollapsed}
+            title={`보스 빠른 메뉴 ${bossQuickMenuCollapsed ? '펼치기' : '접기'}`}
+            onClick={() => setBossQuickMenuCollapsed((collapsed) => !collapsed)}
+          >
+            {bossQuickMenuCollapsed ? '펼치기' : '접기'}
+          </button>
+        </div>
       </header>
       <div className="group-boss-family-list">
         {groupBossFamilies.map((family) => {
@@ -1738,6 +1838,7 @@ function App() {
     const sameAccountCharacterAssigned = !isAssigned && character.sameAccountCharacterAssigned;
     const characterKey = `${character.ownerSub}:${character.ocid}`;
     const isSelectedForHighlights = selectedQuickCharacterKey === characterKey;
+    const isWarningPopupOpen = partyWarningPopup?.characterKey === characterKey;
     return (
       <article
         className={`group-character-quick-card ${character.missingPartyRecommendations.length ? 'has-missing-recommendations' : ''} ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
@@ -1754,6 +1855,29 @@ function App() {
         onDragStart={(event) => startPartyMemberDrag(event, character)}
         onDragEnd={finishPartyMemberDrag}
       >
+        {character.missingPartyRecommendations.length > 0 && (
+          <button
+            className="group-party-warning-trigger"
+            type="button"
+            aria-label={`${character.nickname} 그룹 파티 편성 필요 안내`}
+            aria-expanded={isWarningPopupOpen}
+            title="그룹 파티 편성 필요"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (isWarningPopupOpen) {
+                setPartyWarningPopup(null);
+                return;
+              }
+              const popupWidth = Math.min(260, window.innerWidth - 16);
+              const popupHeight = Math.min(300, window.innerHeight - 16);
+              setPartyWarningPopup({
+                characterKey,
+                left: Math.max(8, Math.min(event.clientX + 8, window.innerWidth - popupWidth - 8)),
+                top: Math.max(8, Math.min(event.clientY + 8, window.innerHeight - popupHeight - 8)),
+              });
+            }}
+          >⚠</button>
+        )}
         <div className="group-character-quick-profile">
           <span className="group-character-quick-avatar">
             {character.image
@@ -1780,46 +1904,29 @@ function App() {
             </span>
           )}
         </div>
-        {character.missingPartyRecommendations.length > 0 && (
-          <div
-            className="unassigned-party-warning group-character-quick-missing"
-            aria-label={`${character.nickname} 그룹 파티 편성 필요`}
-          >
-            <strong><span aria-hidden="true">⚠</span> 그룹 파티 편성 필요</strong>
-            {character.missingPartyRecommendations.map((boss) => (
-              <div key={boss.bossId}>
-                <button
-                  className="group-character-quick-missing-boss"
-                  type="button"
-                  aria-label={`${boss.difficultyLabel} ${boss.name} 그룹 파티 추가`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    createEmptyBossParty(boss, character);
-                  }}
-                >
-                  <span className="unassigned-party-boss">
-                    {bossImageFor(boss.bossId)
-                      ? <img src={bossImageFor(boss.bossId)} alt="" />
-                      : <span className="boss-placeholder" aria-hidden="true">◇</span>}
-                    <span>
-                      <strong>{boss.difficultyLabel} {boss.name}</strong>
-                      <small>{recommendationPartyLabel(boss.recommendedPartySize)} · 배율 {boss.multiplier.toFixed(1)}%</small>
-                    </span>
-                  </span>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </article>
     );
   };
   const groupCharacterQuickMenu = selectedGroup && (
-    <aside className="group-character-quick-menu" aria-label="그룹 캐릭터 빠른 편성">
+    <aside className={`group-character-quick-menu ${characterQuickMenuCollapsed ? 'collapsed' : ''}`} aria-label="그룹 캐릭터 빠른 편성">
       <header>
-        <p className="eyebrow">CHARACTER QUICK MENU</p>
-        <h2>{selectedQuickPartyBoss ? `${selectedQuickPartyBoss.name} 배율순` : '그룹 캐릭터'}</h2>
-        <p>{selectedQuickPartyBoss ? '파티 카드로 드래그해 편성하고, 퀵메뉴나 빈 공간에 놓아 제외하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
+        <div className="group-quick-menu-heading">
+          <div>
+            <p className="eyebrow">CHARACTER QUICK MENU</p>
+            <h2>{selectedQuickPartyBoss ? `${selectedQuickPartyBoss.name} 배율순` : '그룹 캐릭터'}</h2>
+            <p>{selectedQuickPartyBoss ? '파티 카드로 드래그해 편성하고, 퀵메뉴나 빈 공간에 놓아 제외하세요.' : '보스 난이도를 선택하면 해당 배율이 표시됩니다.'}</p>
+          </div>
+          <button
+            className="quick-menu-toggle"
+            type="button"
+            aria-label={`캐릭터 빠른 메뉴 ${characterQuickMenuCollapsed ? '펼치기' : '접기'}`}
+            aria-expanded={!characterQuickMenuCollapsed}
+            title={`캐릭터 빠른 메뉴 ${characterQuickMenuCollapsed ? '펼치기' : '접기'}`}
+            onClick={() => setCharacterQuickMenuCollapsed((collapsed) => !collapsed)}
+          >
+            {characterQuickMenuCollapsed ? '펼치기' : '접기'}
+          </button>
+        </div>
       </header>
       <div className="group-character-quick-list">
         {quickPartyCharacterGroups.map(({ key, ownerName, characters: ownerCharacters }) => (
@@ -1839,6 +1946,44 @@ function App() {
       </div>
     </aside>
   );
+  const partyWarningCharacter = partyWarningPopup
+    ? quickPartyCandidates.find((character) => `${character.ownerSub}:${character.ocid}` === partyWarningPopup.characterKey)
+    : null;
+  const partyWarningPopupElement = partyWarningCharacter && partyWarningPopup && (
+    <div
+      className="unassigned-party-warning group-character-quick-missing group-party-warning-popup"
+      role="dialog"
+      aria-label={`${partyWarningCharacter.nickname} 그룹 파티 편성 필요`}
+      style={{ left: `${partyWarningPopup.left}px`, top: `${partyWarningPopup.top}px` }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <strong><span aria-hidden="true">⚠</span> 그룹 파티 편성 필요</strong>
+      {partyWarningCharacter.missingPartyRecommendations.map((boss) => (
+        <div key={boss.bossId}>
+          <button
+            className="group-character-quick-missing-boss"
+            type="button"
+            aria-label={`${boss.difficultyLabel} ${boss.name} 그룹 파티 추가`}
+            onClick={(event) => {
+              event.stopPropagation();
+              createEmptyBossParty(boss, partyWarningCharacter);
+              setPartyWarningPopup(null);
+            }}
+          >
+            <span className="unassigned-party-boss">
+              {bossImageFor(boss.bossId)
+                ? <img src={bossImageFor(boss.bossId)} alt="" />
+                : <span className="boss-placeholder" aria-hidden="true">◇</span>}
+              <span>
+                <strong>{boss.difficultyLabel} {boss.name}</strong>
+                <small>{recommendationPartyLabel(boss.recommendedPartySize)} · 배율 {boss.multiplier.toFixed(1)}%</small>
+              </span>
+            </span>
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div
@@ -1847,7 +1992,17 @@ function App() {
       onDragOver={handleGroupCanvasDragOver}
       onDrop={dropPartyCharacterOnEmptySpace}
     >
-      <aside className="server-rail" aria-label="내 정보와 그룹">
+      <aside className={`server-rail ${serverRailCollapsed ? 'collapsed' : ''}`} aria-label="내 정보와 그룹">
+        <button
+          className="server-rail-toggle"
+          type="button"
+          aria-label={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
+          aria-expanded={!serverRailCollapsed}
+          title={`좌측 사이드바 ${serverRailCollapsed ? '펼치기' : '접기'}`}
+          onClick={() => setServerRailCollapsed((collapsed) => !collapsed)}
+        >
+          {serverRailCollapsed ? '☰' : '×'}
+        </button>
         <button
           className={`rail-button my-info-button ${view === 'characters' ? 'active' : ''}`}
           type="button"
@@ -3124,7 +3279,68 @@ function App() {
           <footer className="page-footer"><span>MAPLE / SCOUT</span><span>Nexon Scheduler · Cloudflare D1</span></footer>
         </main>
       </div>
+      {invitePrompt && (
+        <div className="invite-prompt-backdrop">
+          <section
+            className="invite-prompt-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invite-prompt-title"
+          >
+            <span className="invite-prompt-icon" aria-hidden="true">✉</span>
+            <p className="eyebrow">GROUP INVITATION</p>
+            <h2 id="invite-prompt-title">
+              {invitePrompt.error
+                ? '초대 정보를 확인할 수 없습니다'
+                : invitePrompt.alreadyJoined
+                  ? '이미 참여한 그룹입니다'
+                  : `${invitePrompt.groupName} 그룹에 참여할까요?`}
+            </h2>
+            <p>
+              {invitePrompt.error
+                ? invitePrompt.error
+                : invitePrompt.alreadyJoined
+                  ? `${invitePrompt.groupName} 그룹에 이미 참여한 상태입니다.`
+                  : '참여하면 실사용 캐릭터가 그룹 로스터에 추가됩니다.'}
+            </p>
+            <div className="invite-prompt-actions">
+              {invitePrompt.error ? (
+                <>
+                  <button className="outline-button" type="button" onClick={() => setInvitePrompt(null)}>닫기</button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={retryGroupInvitePreview}
+                    disabled={busy === 'invite-preview'}
+                  >{busy === 'invite-preview' ? '확인 중...' : '다시 시도'}</button>
+                </>
+              ) : invitePrompt.alreadyJoined ? (
+                <>
+                  <button className="outline-button" type="button" onClick={() => setInvitePrompt(null)}>닫기</button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={openInvitedGroup}
+                    disabled={busy === 'invite-accept'}
+                  >그룹으로 이동</button>
+                </>
+              ) : (
+                <>
+                  <button className="outline-button" type="button" onClick={() => setInvitePrompt(null)}>나중에</button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={joinInvitedGroup}
+                    disabled={busy === 'invite-accept'}
+                  >{busy === 'invite-accept' ? '참여 중...' : '그룹 참여하기'}</button>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       {view === 'group' && selectedGroup && groupCharacterQuickMenu}
+      {view === 'group' && partyWarningPopupElement}
     </div>
   );
 }

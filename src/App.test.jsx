@@ -19,6 +19,70 @@ afterEach(() => {
   delete document.documentElement.dataset.theme;
 });
 
+function mockInviteSignIn({
+  alreadyJoined = false,
+  selectionUnavailable = false,
+  characters = [],
+} = {}) {
+  const requests = [];
+  let memberAdded = alreadyJoined;
+  vi.stubGlobal('fetch', async (input, init = {}) => {
+    const url = String(input);
+    const path = new URL(url, 'http://localhost').pathname;
+    requests.push({ path, method: init.method || 'GET' });
+    if (path === '/api/auth/google') {
+      return Response.json({
+        sessionToken: 'invite-session-token',
+        account: { email: 'member@example.test', name: 'Member', sub: 'member-sub' },
+      });
+    }
+    if (path === '/api/auth/session') {
+      return Response.json({ account: { email: 'member@example.test', name: 'Member', sub: 'member-sub' } });
+    }
+    if (path === '/api/groups') {
+      return Response.json({
+        groups: memberAdded ? [{ id: 'group-1', name: 'Test group', role: 'member' }] : [],
+      });
+    }
+    if (path === '/api/group-invites/preview') {
+      return Response.json({
+        groupId: 'group-1',
+        groupName: 'Test group',
+        alreadyJoined,
+        expiresAt: '2027-01-01T00:00:00.000Z',
+      });
+    }
+    if (path === '/api/group-invites/accept') {
+      memberAdded = true;
+      return Response.json({ groupId: 'group-1', groupName: 'Test group', joined: true });
+    }
+    if (path === '/api/characters/selection' && init.method === 'PUT') {
+      return Response.json({ ocids: JSON.parse(init.body).ocids });
+    }
+    if (path === '/api/characters/selection') {
+      return selectionUnavailable
+        ? Response.json({ error: 'selection temporarily unavailable' }, { status: 500 })
+        : Response.json({ ocids: [] });
+    }
+    if (path === '/api/characters') return Response.json({ characters });
+    if (path === '/api/characters/multipliers') return Response.json({ multipliers: [] });
+    if (path.startsWith('/api/groups/group-1/')) {
+      return Response.json({ multipliers: [], characters: [], parties: [], members: [] });
+    }
+    return Response.json({});
+  });
+  vi.stubGlobal('google', {
+    accounts: {
+      oauth2: {
+        initCodeClient: ({ callback }) => ({
+          requestCode: () => callback({ code: 'invite-auth-code' }),
+        }),
+      },
+    },
+  });
+  return requests;
+}
+
 test('renders the Google sign-in screen', () => {
   render(<App />);
   expect(screen.getByRole('heading', { name: /보스 파티와 캐릭터 일정을/ })).toBeDefined();
@@ -27,6 +91,67 @@ test('renders the Google sign-in screen', () => {
   expect(screen.getByRole('button', { name: '라이트 모드로 전환' })).toBeDefined();
   expect(document.documentElement.dataset.theme).toBe('dark');
   expect(document.querySelector('meta[name="theme-color"]').content).toBe('#171922');
+});
+
+test('shows an invitation confirmation after login and joins only when confirmed', async () => {
+  window.history.replaceState({}, '', `/?invite=${'a'.repeat(64)}`);
+  const requests = mockInviteSignIn();
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /Google 계정으로 계속/i }));
+
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByRole('heading', { name: 'Test group 그룹에 참여할까요?' })).toBeDefined();
+  expect(requests.some(({ path }) => path === '/api/group-invites/preview')).toBe(true);
+  expect(requests.some(({ path }) => path === '/api/group-invites/accept')).toBe(false);
+  expect(requests.some(({ path, method }) => path === '/api/characters/selection' && method === 'PUT')).toBe(false);
+  expect(window.location.pathname).toBe('/');
+  expect(window.location.search).toBe('');
+
+  fireEvent.click(within(dialog).getByRole('button', { name: '그룹 참여하기' }));
+  await waitFor(() => expect(requests.some(({ path }) => path === '/api/group-invites/accept')).toBe(true));
+  expect(requests.some(({ path, method }) => path === '/api/characters/selection' && method === 'PUT')).toBe(true);
+  await screen.findByText('Test group 그룹에 참가했습니다.');
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test('restores a saved login from an invite before saving the selected characters', async () => {
+  window.history.replaceState({}, '', `/?invite=${'c'.repeat(64)}`);
+  window.localStorage.setItem('maple-scout-remember-login', 'true');
+  window.localStorage.setItem('maple-scout-session', 'invite-session-token');
+  window.localStorage.setItem('maple-scout-active-characters:member@example.test', '["ocid-1"]');
+  const requests = mockInviteSignIn({
+    selectionUnavailable: true,
+    characters: [{ ocid: 'ocid-1', nickname: 'TestChar', level: 260 }],
+  });
+  render(<App />);
+
+  const dialog = await screen.findByRole('dialog');
+  expect(await screen.findByText('member@example.test')).toBeDefined();
+  expect(screen.queryByText(/로그인 세션을 복원하지 못했습니다/)).toBeNull();
+  expect(requests.some(({ path, method }) => path === '/api/characters/selection' && method === 'PUT')).toBe(false);
+
+  fireEvent.click(within(dialog).getByRole('button', { name: '그룹 참여하기' }));
+  await waitFor(() => expect(requests.some(({ path }) => path === '/api/group-invites/accept')).toBe(true));
+  expect(requests.some(({ path, method }) => path === '/api/characters/selection' && method === 'PUT')).toBe(true);
+});
+
+test('shows an already-joined invitation without accepting it again', async () => {
+  window.history.replaceState({}, '', `/?invite=${'b'.repeat(64)}`);
+  const requests = mockInviteSignIn({ alreadyJoined: true });
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /Google 계정으로 계속/i }));
+
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByRole('heading', { name: '이미 참여한 그룹입니다' })).toBeDefined();
+  expect(within(dialog).getByText('Test group 그룹에 이미 참여한 상태입니다.')).toBeDefined();
+  expect(within(dialog).getByRole('button', { name: '그룹으로 이동' })).toBeDefined();
+  expect(requests.some(({ path }) => path === '/api/group-invites/accept')).toBe(false);
+  expect(window.location.pathname).toBe('/');
+  expect(window.location.search).toBe('');
+
+  fireEvent.click(within(dialog).getByRole('button', { name: '그룹으로 이동' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(requests.some(({ path }) => path === '/api/group-invites/accept')).toBe(false);
 });
 
 test('switches between and remembers light and dark themes', async () => {
@@ -585,10 +710,21 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(groupBossQuickMenu.nextElementSibling.classList.contains('app-main')).toBe(true);
   expect(groupBossQuickMenu.closest('.group-quick-party-builder')).toBeNull();
   expect(document.querySelector('.group-quick-party-builder .group-boss-family-list')).toBeNull();
+  const sidebarToggle = screen.getByRole('button', { name: '좌측 사이드바 접기' });
+  fireEvent.click(sidebarToggle);
+  expect(document.querySelector('.server-rail').classList.contains('collapsed')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '좌측 사이드바 펼치기' }));
+  const bossMenuToggle = screen.getByRole('button', { name: '보스 빠른 메뉴 접기' });
+  fireEvent.click(bossMenuToggle);
+  expect(groupBossQuickMenu.classList.contains('collapsed')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '보스 빠른 메뉴 펼치기' }));
   const groupCharacterQuickMenu = document.querySelector('.group-character-quick-menu');
   expect(groupCharacterQuickMenu).not.toBeNull();
   expect(groupCharacterQuickMenu.previousElementSibling.classList.contains('app-main')).toBe(true);
   expect(groupCharacterQuickMenu.parentElement.classList.contains('app-shell')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '캐릭터 빠른 메뉴 접기' }));
+  expect(groupCharacterQuickMenu.classList.contains('collapsed')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '캐릭터 빠른 메뉴 펼치기' }));
   const kalosDifficultyButton = screen.getByRole('button', { name: /카오스 감시자 칼로스 파티 편성/ });
   expect(kalosDifficultyButton.textContent).toContain('C');
   fireEvent.click(kalosDifficultyButton);
@@ -604,16 +740,25 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const initialGroupmateQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
     .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '그룹동료');
   expect(initialGroupmateQuickCard.querySelector('.group-character-quick-details b').textContent).toBe('80.0%');
-  expect(initialGroupmateQuickCard.querySelector('.group-character-quick-missing').textContent)
+  const groupmateWarningTrigger = within(initialGroupmateQuickCard)
+    .getByRole('button', { name: '그룹동료 그룹 파티 편성 필요 안내' });
+  expect(groupmateWarningTrigger.title).toBe('그룹 파티 편성 필요');
+  fireEvent.click(groupmateWarningTrigger, { clientX: 180, clientY: 220 });
+  const groupmateWarningPopup = screen.getByRole('dialog', { name: '그룹동료 그룹 파티 편성 필요' });
+  expect(groupmateWarningPopup.textContent)
     .toContain('검은 마법사');
-  expect(initialGroupmateQuickCard.querySelector('.group-character-quick-missing').textContent)
+  expect(groupmateWarningPopup.textContent)
     .not.toContain('감시자 칼로스');
+  expect(groupmateWarningPopup.style.left).toBe('188px');
+  expect(groupmateWarningPopup.style.top).toBe('228px');
+  fireEvent.click(groupmateWarningTrigger);
+  expect(screen.queryByRole('dialog', { name: '그룹동료 그룹 파티 편성 필요' })).toBeNull();
   const firstEmptyPartyCommitCount = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
   fireEvent.click(screen.getByRole('button', { name: '완료 · 변경 저장' }));
   await waitFor(() => expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(firstEmptyPartyCommitCount + 1));
   await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
-  expect(initialGroupmateQuickCard.querySelector('.group-character-quick-missing').textContent)
-    .not.toContain('감시자 칼로스');
+  expect(within(initialGroupmateQuickCard)
+    .getByRole('button', { name: '그룹동료 그룹 파티 편성 필요 안내' })).toBeDefined();
   expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))[0]
     .request.parties.find(({ bossId }) => bossId === 'chaos_kalos').members).toEqual([]);
 
@@ -668,7 +813,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   ))).toBe(true);
   const groupedQuickCards = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-grid .group-character-quick-card')];
   expect(groupedQuickCards).toHaveLength(quickCharacterCards.length);
-  expect(groupedQuickCards.some((card) => card.querySelector('.group-character-quick-missing'))).toBe(true);
+  expect(groupedQuickCards.some((card) => card.querySelector('.group-party-warning-trigger'))).toBe(true);
   const ownerGroups = [...groupCharacterQuickMenu.querySelectorAll('.group-character-owner-group')];
   expect(ownerGroups[0].querySelector('h3').textContent).toBe('Member');
   const ownOwnerCards = [...ownerGroups[0].querySelectorAll('.group-character-quick-card')];
@@ -836,7 +981,10 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
 
   const teammateQuickCard = [...document.querySelectorAll('.group-character-quick-card')]
     .find((card) => card.querySelector('.group-character-quick-details > strong').textContent === '그룹동료');
-  const blackMageRecommendationButton = within(teammateQuickCard).getByRole('button', {
+  fireEvent.click(within(teammateQuickCard).getByRole('button', {
+    name: '그룹동료 그룹 파티 편성 필요 안내',
+  }));
+  const blackMageRecommendationButton = screen.getByRole('button', {
     name: '하드 검은 마법사 그룹 파티 추가',
   });
   const partyCardsBeforeQuickAdd = document.querySelectorAll('.group-main-party-card').length;

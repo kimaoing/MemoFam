@@ -710,10 +710,14 @@ async function createGroupInvite(env: Env, groupId: string, principal: GooglePri
   return json({ token, expiresAt }, 201);
 }
 
-async function acceptGroupInvite(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+function groupInviteTokenFromBody(body: Record<string, unknown>): string {
   if (Object.keys(body).some((key) => key !== 'token')) throw new ApiError(400, '초대 토큰만 요청할 수 있습니다.');
   const token = stringField(body, 'token', 128);
   if (!/^[a-f0-9]{64}$/i.test(token)) throw new ApiError(400, '초대 링크가 올바르지 않습니다.');
+  return token;
+}
+
+async function resolveGroupInvite(env: Env, principal: GooglePrincipal, token: string) {
   const tokenHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   const hash = [...new Uint8Array(tokenHash)].map((value) => value.toString(16).padStart(2, '0')).join('');
   const invite = await env.DB.prepare(`
@@ -726,18 +730,33 @@ async function acceptGroupInvite(env: Env, principal: GooglePrincipal, body: Rec
   const existingMember = await env.DB.prepare(`
     SELECT 1 FROM group_members WHERE group_id = ? AND lower(email) = lower(?)
   `).bind(invite.groupId, principal.email).first();
+  return { ...invite, alreadyJoined: Boolean(existingMember) };
+}
+
+async function previewGroupInvite(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  const invite = await resolveGroupInvite(env, principal, groupInviteTokenFromBody(body));
+  return json({
+    groupId: invite.groupId,
+    groupName: invite.name,
+    alreadyJoined: invite.alreadyJoined,
+    expiresAt: invite.expiresAt,
+  });
+}
+
+async function acceptGroupInvite(env: Env, principal: GooglePrincipal, body: Record<string, unknown>): Promise<Response> {
+  const invite = await resolveGroupInvite(env, principal, groupInviteTokenFromBody(body));
   await env.DB.prepare(`
     INSERT INTO group_members (group_id, email, role, joined_at)
     VALUES (?, ?, 'member', ?)
     ON CONFLICT (group_id, email) DO NOTHING
   `).bind(invite.groupId, principal.email, new Date().toISOString()).run();
-  if (!existingMember) {
+  if (!invite.alreadyJoined) {
     await env.DB.prepare(`
       DELETE FROM group_character_exclusions WHERE group_id = ? AND google_sub = ?
     `).bind(invite.groupId, principal.sub).run();
   }
   await syncActiveCharactersToGroups(env, principal, await activeCharacterOcids(env, principal), invite.groupId);
-  return json({ groupId: invite.groupId, groupName: invite.name, joined: true });
+  return json({ groupId: invite.groupId, groupName: invite.name, joined: !invite.alreadyJoined });
 }
 
 async function listGroupCharacters(env: Env, groupId: string, principal: GooglePrincipal): Promise<Response> {
@@ -1356,6 +1375,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (request.method === 'POST' && path.length === 3 && path[1] === 'group-invites' && path[2] === 'accept') {
     return acceptGroupInvite(env, principal, await readBody(request));
+  }
+  if (request.method === 'POST' && path.length === 3 && path[1] === 'group-invites' && path[2] === 'preview') {
+    return previewGroupInvite(env, principal, await readBody(request));
   }
   if (request.method === 'GET' && path.length === 2 && path[1] === 'groups') return listGroups(env, principal);
   if (request.method === 'GET' && path.length === 2 && path[1] === 'characters') return listCharacters(env, principal);

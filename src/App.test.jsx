@@ -433,7 +433,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
 
   const syncCall = workerCalls.find(({ method, path }) => method === 'POST' && path === '/api/characters/verify');
   expect(syncCall.request).toEqual({ apiKey: 'test-nexon-key' });
-  expect(screen.queryByDisplayValue('test-nexon-key')).toBeNull();
+  expect(screen.getByLabelText('Nexon Open API 키').value).toBe('test-nexon-key');
 
   fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' }));
   fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' }));
@@ -681,6 +681,9 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   fireEvent.click(screen.getByTitle('내 정보'));
   fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));
   expect(window.open).toHaveBeenNthCalledWith(1, 'about:blank', '_blank');
+  await waitFor(() => expect(workerCalls.filter(({ method, path }) => (
+    method === 'POST' && path === '/api/characters/verify'
+  ))).toHaveLength(2));
   await act(async () => new Promise((resolve) => window.setTimeout(resolve, 650)));
   expect(screen.getByRole('alert').textContent).toContain('MemoFam Reader 설치');
   expect(screen.getByText(/압축해제된 확장 프로그램을 로드/)).toBeDefined();
@@ -739,7 +742,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
       },
     },
   }));
-  await screen.findByText(/실사용 캐릭터 2\/2명 동기화 완료/);
+  const refreshNotice = await screen.findByText(/실사용 캐릭터 2\/2명 동기화 완료/);
+  expect(refreshNotice.textContent).toContain('스케줄 4개 캐릭터 동기화 완료');
   expect(screen.queryByLabelText('북마클릿 주소')).toBeNull();
   expect(mapleScouterPopup.close).toHaveBeenCalledTimes(2);
 

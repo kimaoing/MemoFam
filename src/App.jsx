@@ -928,6 +928,7 @@ function App() {
     setAccessToken('');
     setAccount(null);
     setCharacters([]);
+    setNexonKey('');
     setActiveCharacterIds([]);
     setSelectedGroupId('');
     setGroups([]);
@@ -1004,15 +1005,23 @@ function App() {
     saveActiveCharacterIds(characters.map(({ ocid }) => ocid));
   }
 
-  async function syncCharacters(event) {
+  async function syncCharacters(event, { quiet = false } = {}) {
     event?.preventDefault();
-    if (!nexonKey.trim()) return;
-    setBusy('sync');
-    setNotice(null);
+    const apiKey = nexonKey.trim();
+    if (!apiKey) {
+      const error = new Error('계정 설정에서 Nexon API 키를 먼저 입력해 주세요.');
+      if (quiet) throw error;
+      setNotice({ type: 'error', text: error.message });
+      return null;
+    }
+    if (!quiet) {
+      setBusy('sync');
+      setNotice(null);
+    }
     try {
       const result = await workerRequest(accessToken, '/api/characters/verify', {
         method: 'POST',
-        body: JSON.stringify({ apiKey: nexonKey.trim() }),
+        body: JSON.stringify({ apiKey }),
       });
       const syncedCharacters = result.characters || [];
       if (!syncedCharacters.length) throw new Error('Nexon API에서 캐릭터 목록을 찾을 수 없습니다.');
@@ -1021,21 +1030,30 @@ function App() {
         syncedCharacters.some((character) => character.ocid === ocid)
       ));
       saveActiveCharacterIds(retainedActiveIds);
-      if (!rememberApiKey) setNexonKey('');
       const skippedCharacters = result.skippedCharacters || [];
       const schedulerUnavailable = result.schedulerUnavailable || [];
-      setNotice({
-        type: 'success',
-        text: [
-          `${syncedCharacters.length}개 캐릭터 정보를 동기화했습니다.`,
-          skippedCharacters.length ? `${skippedCharacters.length}개 캐릭터는 정보를 가져오지 못해 건너뛰었습니다.` : '',
-          schedulerUnavailable.length ? `${schedulerUnavailable.length}개 캐릭터의 스케줄러 정보는 가져오지 못했습니다.` : '',
-        ].filter(Boolean).join(' '),
-      });
+      const summary = {
+        characterCount: syncedCharacters.length,
+        skippedCount: skippedCharacters.length,
+        schedulerUnavailableCount: schedulerUnavailable.length,
+      };
+      if (!quiet) {
+        setNotice({
+          type: 'success',
+          text: [
+            `${syncedCharacters.length}개 캐릭터 정보를 동기화했습니다.`,
+            skippedCharacters.length ? `${skippedCharacters.length}개 캐릭터는 정보를 가져오지 못해 건너뛰었습니다.` : '',
+            schedulerUnavailable.length ? `${schedulerUnavailable.length}개 캐릭터의 스케줄러 정보는 가져오지 못했습니다.` : '',
+          ].filter(Boolean).join(' '),
+        });
+      }
+      return summary;
     } catch (error) {
+      if (quiet) throw error;
       reportError(error);
+      return null;
     } finally {
-      setBusy('');
+      if (!quiet) setBusy('');
     }
   }
 
@@ -1110,13 +1128,35 @@ function App() {
 
   async function refreshMapleScouterData() {
     const refreshCharacters = activeCharacters.slice();
+    if (!nexonKey.trim()) {
+      setNotice({ type: 'error', text: '계정 설정에서 Nexon API 키를 먼저 입력해 주세요.' });
+      return;
+    }
+    const scheduleSyncPromise = syncCharacters(null, { quiet: true })
+      .then((result) => ({ result }))
+      .catch((error) => ({ error }));
+    const scheduleSyncMessage = (outcome) => outcome.error
+      ? `스케줄 동기화 실패: ${outcome.error.message || '실패'}`
+      : `스케줄 ${outcome.result.characterCount}개 캐릭터 동기화 완료.`;
     if (!refreshCharacters.length) {
-      setNotice({ type: 'error', text: '계정 설정에서 먼저 실사용 캐릭터를 선택해 주세요.' });
+      setBusy('sync');
+      const scheduleOutcome = await scheduleSyncPromise;
+      setBusy('');
+      setNotice({
+        type: scheduleOutcome.error ? 'error' : 'success',
+        text: scheduleSyncMessage(scheduleOutcome),
+      });
       return;
     }
     const popup = window.open('about:blank', '_blank');
     if (!popup) {
-      setNotice({ type: 'error', text: 'MapleScouter 팝업이 차단됐습니다. 팝업을 허용해 주세요.' });
+      setBusy('sync');
+      const scheduleOutcome = await scheduleSyncPromise;
+      setBusy('');
+      setNotice({
+        type: 'error',
+        text: `MapleScouter 팝업이 차단됐습니다. 팝업을 허용해 주세요. ${scheduleSyncMessage(scheduleOutcome)}`,
+      });
       return;
     }
 
@@ -1128,11 +1168,19 @@ function App() {
       popup.close();
       setBusy('');
       setShowExtensionInstallHelp(true);
-      setNotice({ type: 'error', text: 'MemoFam Reader 확장이 없거나 현재 앱 도메인에서 활성화되지 않았습니다.' });
+      const scheduleOutcome = await scheduleSyncPromise;
+      setNotice({
+        type: 'error',
+        text: `MemoFam Reader 확장이 없거나 현재 앱 도메인에서 활성화되지 않았습니다. ${scheduleSyncMessage(scheduleOutcome)}`,
+      });
       return;
     }
     if (popup.closed) {
+      const scheduleOutcome = await scheduleSyncPromise;
       setBusy('');
+      setNotice(scheduleOutcome.error
+        ? { type: 'error', text: `새로 연 MapleScouter 창이 닫혔습니다. 스케줄 동기화 실패: ${scheduleOutcome.error.message || '실패'}` }
+        : { type: 'success', text: `새로 연 MapleScouter 창이 닫혔습니다. ${scheduleOutcome.result.characterCount}개 캐릭터의 스케줄을 동기화했습니다.` });
       return;
     }
 
@@ -1179,6 +1227,10 @@ function App() {
         }
       }
 
+      const scheduleOutcome = await scheduleSyncPromise;
+      if (scheduleOutcome.error) {
+        failures.push(`스케줄 동기화: ${scheduleOutcome.error.message || '실패'}`);
+      }
       try {
         if (selectedGroupId) {
           await loadGroupData(accessToken, selectedGroupId);
@@ -1199,7 +1251,13 @@ function App() {
       setBusy('');
     }
 
-    const summary = `실사용 캐릭터 ${successfulCharacters}/${refreshCharacters.length}명 동기화 완료, ${updatedMultipliers}개 캐릭터 배율 저장.${ignoredMultipliers ? ` ${ignoredMultipliers}개 보스는 제외했습니다.` : ''}`;
+    const scheduleOutcome = await scheduleSyncPromise;
+    const scheduleSummary = scheduleOutcome.error
+      ? ''
+      : ` ${scheduleSyncMessage(scheduleOutcome)}${scheduleOutcome.result.schedulerUnavailableCount
+        ? ` ${scheduleOutcome.result.schedulerUnavailableCount}개 캐릭터의 스케줄 정보를 가져오지 못했습니다.`
+        : ''}`;
+    const summary = `실사용 캐릭터 ${successfulCharacters}/${refreshCharacters.length}명 동기화 완료, ${updatedMultipliers}개 캐릭터 배율 저장.${ignoredMultipliers ? ` ${ignoredMultipliers}개 보스는 제외했습니다.` : ''}${scheduleSummary}`;
     setNotice({
       type: failures.length ? 'error' : 'success',
       text: `${summary}${failures.length ? ` 실패: ${failures.join(' · ')}` : ''}`,

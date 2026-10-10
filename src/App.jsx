@@ -1273,6 +1273,17 @@ function App() {
       || (Number(right.boss380HexaScore) || 0) - (Number(left.boss380HexaScore) || 0)
       || left.nickname.localeCompare(right.nickname, 'ko')
     ));
+  const groupSettingsCharacters = [...new Map([
+    ...activeCharacters,
+    ...groupCharacters.filter((character) => (
+      character.ownerSub === account?.sub
+      || character.ownerEmail?.toLocaleLowerCase('ko') === account?.email?.toLocaleLowerCase('ko')
+    )),
+  ].map((character) => [character.ocid, character])).values()]
+    .sort((left, right) => (
+      (Number(right.level) || 0) - (Number(left.level) || 0)
+      || left.nickname.localeCompare(right.nickname, 'ko')
+    ));
   const activeOcids = new Set(activeCharacters.map(({ ocid }) => ocid));
   const personalParties = allGroupParties.filter((party) => (
     (party.members || []).some((member) => member.ownerSub === account?.sub && activeOcids.has(member.ocid))
@@ -1333,6 +1344,10 @@ function App() {
           ))
         ))
         : null;
+      const characterMultipliers = multipliers.filter((entry) => (
+        (!entry.ownerSub || entry.ownerSub === character.ownerSub)
+        && entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
+      ));
       return {
         ...character,
         quickMultiplier: selectedQuickPartyBoss
@@ -1341,13 +1356,15 @@ function App() {
         quickRecommendation: selectedQuickPartyBoss
           ? bossRecommendationForCharacter(
             character,
-            multipliers.filter((entry) => (
-              (!entry.ownerSub || entry.ownerSub === character.ownerSub)
-              && entry.nickname?.toLocaleLowerCase('ko') === character.nickname.toLocaleLowerCase('ko')
-            )),
+            characterMultipliers,
             selectedQuickPartyBoss,
           )
           : null,
+        missingPartyRecommendations: recommendationsForCharacter(character, characterMultipliers)
+          .filter((boss) => (
+            boss.recommendedPartySize > 1
+            && !partiesAcrossGroups.some((party) => party.bossId === boss.bossId)
+          )),
         assignedParty,
         sameAccountCharacterAssigned: Boolean(focusedQuickParty && (focusedQuickParty.members || []).some((member) => (
           member.ownerSub === character.ownerSub && member.ocid !== character.ocid
@@ -1530,7 +1547,7 @@ function App() {
           const isSelectedForHighlights = selectedQuickCharacterKey === characterKey;
           return (
             <article
-              className={`group-character-quick-card ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
+              className={`group-character-quick-card ${character.missingPartyRecommendations.length ? 'has-missing-recommendations' : ''} ${isAssigned ? 'already-assigned' : ''} ${sameAccountCharacterAssigned ? 'blocked-by-account' : ''} ${isSelectedForHighlights ? 'selected-for-boss-highlights' : ''}`}
               key={characterKey}
               draggable={canManage && !isAssigned && !sameAccountCharacterAssigned}
               tabIndex={0}
@@ -1544,45 +1561,78 @@ function App() {
               onDragStart={(event) => startPartyMemberDrag(event, character)}
               onDragEnd={finishPartyMemberDrag}
             >
-              <span className="group-character-quick-avatar">
-                {character.image
-                  ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
-                  : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
-              </span>
-              <span className="group-character-quick-details">
-                <strong>{character.nickname}</strong>
-                <small>Lv. {character.level || '-'}</small>
-                {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}%</b>}
-                {character.quickRecommendation && (
-                  <strong className={`group-character-quick-recommendation ${character.quickRecommendation.recommendedPartySize ? `party-size-${character.quickRecommendation.recommendedPartySize}` : 'impossible'}`}>
-                    {character.quickRecommendation.recommendedPartySize
-                      ? recommendationPartyLabel(character.quickRecommendation.recommendedPartySize)
-                      : '불가능'}
-                  </strong>
+              <div className="group-character-quick-profile">
+                <span className="group-character-quick-avatar">
+                  {character.image
+                    ? <img src={character.image} alt={`${character.nickname} 캐릭터`} />
+                    : <span className="group-character-quick-fallback">{character.nickname.slice(0, 1)}</span>}
+                </span>
+                <span className="group-character-quick-details">
+                  <strong>{character.nickname}</strong>
+                  <small>Lv. {character.level || '-'}</small>
+                  {selectedQuickPartyBoss && <b>{character.quickMultiplier.toFixed(1)}%</b>}
+                  {character.quickRecommendation && (
+                    <strong className={`group-character-quick-recommendation ${character.quickRecommendation.recommendedPartySize ? `party-size-${character.quickRecommendation.recommendedPartySize}` : 'impossible'}`}>
+                      {character.quickRecommendation.recommendedPartySize
+                        ? recommendationPartyLabel(character.quickRecommendation.recommendedPartySize)
+                        : '불가능'}
+                    </strong>
+                  )}
+                </span>
+                {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={busy === 'party-save' || !focusedQuickParty}
+                    title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
+                    onClick={() => quickAssignCharacter(character)}
+                  >
+                    파티에 추가
+                  </button>
                 )}
-              </span>
-              {selectedQuickPartyBoss && canManage && !isAssigned && !sameAccountCharacterAssigned && (
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={busy === 'party-save' || !focusedQuickParty}
-                  title={focusedQuickParty ? '선택한 파티에 캐릭터 추가' : '먼저 편성할 파티를 선택하세요'}
-                  onClick={() => quickAssignCharacter(character)}
+                {isAssigned && (
+                  <em className="group-character-quick-assignment-note">
+                    {character.assignedParty.groupId === selectedGroupId
+                      ? '이미 그룹에 편성되어있습니다.'
+                      : '이미 다른 그룹에 편성되어있습니다.'}
+                  </em>
+                )}
+                {sameAccountCharacterAssigned && (
+                  <em className="group-character-quick-assignment-note">
+                    이미 같은 계정의 캐릭터가 편성되어있습니다.
+                  </em>
+                )}
+              </div>
+              {character.missingPartyRecommendations.length > 0 && (
+                <div
+                  className="unassigned-party-warning group-character-quick-missing"
+                  aria-label={`${character.nickname} 그룹 파티 편성 필요`}
                 >
-                  파티에 추가
-                </button>
-              )}
-              {isAssigned && (
-                <em className="group-character-quick-assignment-note">
-                  {character.assignedParty.groupId === selectedGroupId
-                    ? '이미 그룹에 편성되어있습니다.'
-                    : '이미 다른 그룹에 편성되어있습니다.'}
-                </em>
-              )}
-              {sameAccountCharacterAssigned && (
-                <em className="group-character-quick-assignment-note">
-                  이미 같은 계정의 캐릭터가 편성되어있습니다.
-                </em>
+                  <strong><span aria-hidden="true">⚠</span> 그룹 파티 편성 필요</strong>
+                  {character.missingPartyRecommendations.map((boss) => (
+                    <div key={boss.bossId}>
+                      <button
+                        className="group-character-quick-missing-boss"
+                        type="button"
+                        aria-label={`${boss.difficultyLabel} ${boss.name} 그룹 파티 추가`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          createEmptyBossParty(boss);
+                        }}
+                      >
+                        <span className="unassigned-party-boss">
+                          {bossImageFor(boss.bossId)
+                            ? <img src={bossImageFor(boss.bossId)} alt="" />
+                            : <span className="boss-placeholder" aria-hidden="true">◇</span>}
+                          <span>
+                            <strong>{boss.difficultyLabel} {boss.name}</strong>
+                            <small>{recommendationPartyLabel(boss.recommendedPartySize)} 추천 · 배율 {boss.multiplier.toFixed(1)}%</small>
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </article>
           );
@@ -1984,14 +2034,6 @@ function App() {
                                                 <small>{recommendationPartyLabel(boss.recommendedPartySize)} 추천 · 배율 {boss.multiplier.toFixed(1)}%</small>
                                               </span>
                                             </span>
-                                            {groups.length > 0 && (
-                                              <button
-                                                type="button"
-                                                onClick={() => openGroupPartyBuilder(selectedGroupId || groups[0].id, boss.bossId)}
-                                              >
-                                                파티 편성
-                                              </button>
-                                            )}
                                           </div>
                                         ))}
                                       </div>
@@ -2370,12 +2412,15 @@ function App() {
                       <section className="group-character-picker panel-section">
                         <div className="section-heading">
                           <div><p className="eyebrow">ADD YOUR CHARACTERS</p><h2>그룹에 참여시킬 캐릭터</h2></div>
-                          <span className="updated-count">실사용 캐릭터 {activeCharacters.length}명</span>
+                          <span className="updated-count">사용 또는 그룹 참여 캐릭터 {groupSettingsCharacters.length}명</span>
                         </div>
-                        {activeCharacters.length ? (
+                        {groupSettingsCharacters.length ? (
                           <div className="group-add-character-grid">
-                            {activeCharacters.map((character) => {
-                              const alreadyAdded = groupCharacters.some((entry) => entry.ocid === character.ocid);
+                            {groupSettingsCharacters.map((character) => {
+                              const alreadyAdded = groupCharacters.some((entry) => (
+                                entry.ocid === character.ocid
+                                && (!entry.ownerSub || entry.ownerSub === account?.sub)
+                              ));
                               return (
                                 <article className="group-add-character" key={character.ocid}>
                                   {character.image ? <img src={character.image} alt="" /> : <span className="boss-placeholder">◇</span>}
@@ -2393,7 +2438,7 @@ function App() {
                               );
                             })}
                           </div>
-                        ) : <div className="empty-state compact"><strong>실사용 캐릭터가 없습니다</strong><p>계정 설정에서 먼저 사용할 캐릭터를 선택하세요.</p></div>}
+                        ) : <div className="empty-state compact"><strong>표시할 캐릭터가 없습니다</strong><p>계정 설정에서 사용할 캐릭터로 선택하거나 먼저 이 그룹에 참여시키세요.</p></div>}
                       </section>
 
                       <section className="group-invite-section">

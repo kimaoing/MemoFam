@@ -398,6 +398,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
                 { nickname: '오잉느', bossId: 'chaos_kalos', multiplier: 50 },
                 { nickname: '오잉느', bossId: 'hard_blackmage', multiplier: 100 },
                 { nickname: '그룹동료', bossId: 'chaos_kalos', multiplier: 80 },
+                { nickname: '그룹동료', bossId: 'hard_blackmage', multiplier: 33 },
                 { nickname: '오잉느', bossId: 'normal_bardrix', multiplier: 100 },
                 { nickname: '오잉느', bossId: 'hard_bardrix', multiplier: 33 },
               ] }
@@ -424,7 +425,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
 
   fireEvent.change(screen.getByLabelText('Nexon Open API 키'), { target: { value: 'test-nexon-key' } });
   fireEvent.click(screen.getByRole('button', { name: '캐릭터 불러오기' }));
-  await waitFor(() => expect(screen.getByRole('status').textContent).toContain('4개 캐릭터 정보를 동기화했습니다.'));
+  await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('4개 캐릭터 정보를 동기화했습니다.'));
   expect(screen.queryByText(/숨길캐릭터/)).toBeNull();
   expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' })).toBeDefined();
   expect(screen.getByRole('checkbox', { name: '실사용 캐릭터 아잉느 Lv. 280' })).toBeDefined();
@@ -462,6 +463,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
     .toContain('카오스 감시자 칼로스');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .toContain('2인격 가능 추천');
+  expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning button')).toBeNull();
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning').textContent)
     .not.toContain('검은 마법사');
   expect(ownActiveCharacterWrap.querySelector('.unassigned-party-warning img')).not.toBeNull();
@@ -515,6 +517,26 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   expect(addOwnCharacterButton.textContent).toContain('참여');
   fireEvent.click(addOwnCharacterButton);
   await waitFor(() => expect(ownGroupCharacterCard.querySelector('button').textContent).toContain('제거'));
+  fireEvent.click(screen.getByTitle('계정 설정'));
+  fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' }));
+  await waitFor(() => expect(window.localStorage.getItem('maple-scout-active-characters:member@example.test'))
+    .toBe(JSON.stringify(['ocid-2'])));
+  fireEvent.click(screen.getByTitle('Test group'));
+  await screen.findByRole('button', { name: '그룹 설정' });
+  fireEvent.click(screen.getByRole('button', { name: '그룹 설정' }));
+  const unselectedJoinedCharacter = [...document.querySelectorAll('.group-add-character')]
+    .find((card) => card.querySelector('strong').textContent === '오잉느');
+  expect(unselectedJoinedCharacter.querySelector('button').textContent).toContain('제거');
+  expect([...document.querySelectorAll('.group-add-character')].some((card) => (
+    card.querySelector('strong').textContent === '최고레벨'
+  ))).toBe(false);
+  fireEvent.click(screen.getByTitle('계정 설정'));
+  fireEvent.click(screen.getByRole('checkbox', { name: '실사용 캐릭터 오잉느 Lv. 291' }));
+  await waitFor(() => expect(window.localStorage.getItem('maple-scout-active-characters:member@example.test'))
+    .toBe(JSON.stringify(['ocid-2', 'ocid-1'])));
+  fireEvent.click(screen.getByTitle('Test group'));
+  await screen.findByRole('button', { name: '그룹 설정' });
+  fireEvent.click(screen.getByRole('button', { name: '그룹 설정' }));
   fireEvent.click(screen.getByRole('button', { name: '← 그룹 메인으로' }));
   const groupBossQuickMenu = document.querySelector('.group-boss-quick-menu');
   expect(groupBossQuickMenu).not.toBeNull();
@@ -537,10 +559,16 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const initialGroupmateQuickCard = [...groupCharacterQuickMenu.querySelectorAll('.group-character-quick-card')]
     .find((card) => card.querySelector('.group-character-quick-details strong').textContent === '그룹동료');
   expect(initialGroupmateQuickCard.querySelector('.group-character-quick-details b').textContent).toBe('80.0%');
+  expect(initialGroupmateQuickCard.querySelector('.group-character-quick-missing').textContent)
+    .toContain('검은 마법사');
+  expect(initialGroupmateQuickCard.querySelector('.group-character-quick-missing').textContent)
+    .not.toContain('감시자 칼로스');
   const firstEmptyPartyCommitCount = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
   fireEvent.click(screen.getByRole('button', { name: '완료 · 변경 저장' }));
   await waitFor(() => expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(firstEmptyPartyCommitCount + 1));
-  await waitFor(() => expect(screen.getByRole('status').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
+  await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
+  expect(initialGroupmateQuickCard.querySelector('.group-character-quick-missing').textContent)
+    .not.toContain('감시자 칼로스');
   expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))[0]
     .request.parties.find(({ bossId }) => bossId === 'chaos_kalos').members).toEqual([]);
 
@@ -576,7 +604,7 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   )  )).toHaveLength(partyMutationCountBeforeDraft);
   fireEvent.click(screen.getByRole('button', { name: '완료 · 변경 저장' }));
   await waitFor(() => expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(commitCountBeforeDraft + 1));
-  await waitFor(() => expect(screen.getByRole('status').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
+  await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
   expect(assignedCharacters.get('ocid-1')).toBeDefined();
   const commitRequest = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).at(-1);
   const committedKalosParties = commitRequest.request.parties.filter(({ bossId }) => bossId === 'chaos_kalos');
@@ -673,10 +701,24 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const commitsBeforeEmptyParty = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).length;
   fireEvent.click(screen.getByRole('button', { name: '완료 · 변경 저장' }));
   await waitFor(() => expect(workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit'))).toHaveLength(commitsBeforeEmptyParty + 1));
-  await waitFor(() => expect(screen.getByRole('status').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
+  await waitFor(() => expect(document.querySelector('.notice[role="status"]').textContent).toContain('파티 편성 변경을 모두 저장했습니다.'));
   const emptyPartyCommit = workerCalls.filter(({ method, path }) => method === 'PUT' && path.endsWith('/parties/commit')).at(-1);
   const emptyBardrixParty = emptyPartyCommit.request.parties.find(({ bossId }) => bossId === 'normal_bardrix');
   expect(emptyBardrixParty.members).toEqual([]);
+
+  const teammateQuickCard = [...document.querySelectorAll('.group-character-quick-card')]
+    .find((card) => card.querySelector('.group-character-quick-details > strong').textContent === '그룹동료');
+  const blackMageRecommendationButton = within(teammateQuickCard).getByRole('button', {
+    name: '하드 검은 마법사 그룹 파티 추가',
+  });
+  const partyCardsBeforeQuickAdd = document.querySelectorAll('.group-main-party-card').length;
+  fireEvent.click(blackMageRecommendationButton);
+  expect(document.querySelectorAll('.group-main-party-card')).toHaveLength(partyCardsBeforeQuickAdd + 1);
+  expect([...document.querySelectorAll('.group-main-party-card')].some((card) => (
+    card.textContent.includes('검은 마법사')
+      && card.querySelector('.party-difficulty-mark')?.title === '하드'
+  ))).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '변경 취소' }));
 
   fireEvent.click(screen.getByTitle('내 정보'));
   fireEvent.click(await screen.findByRole('button', { name: '실사용 2명 전체 갱신' }));

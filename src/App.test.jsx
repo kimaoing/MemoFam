@@ -796,10 +796,8 @@ test('syncs all characters with one Nexon API key and refreshes a selected chara
   const extensionDownload = screen.getByRole('link', { name: 'MemoFam Reader 다운로드' });
   expect(extensionDownload.getAttribute('href')).toBe('/memofam-maplescouter-reader.zip');
   expect(extensionDownload.hasAttribute('download')).toBe(true);
-  const extensionSettingsLink = screen.getByRole('link', { name: 'Chrome 확장 프로그램 열기' });
-  expect(extensionSettingsLink.getAttribute('href')).toBe('chrome://extensions/');
-  expect(extensionSettingsLink.getAttribute('target')).toBe('_blank');
-  expect(extensionSettingsLink.getAttribute('rel')).toContain('noopener');
+  fireEvent.click(screen.getByRole('button', { name: 'Chrome 확장 프로그램 열기' }));
+  expect(await screen.findByText(/브라우저 보안 정책상 웹페이지에서 확장 프로그램 페이지를 직접 열 수 없습니다/)).toBeDefined();
   expect(mapleScouterPopup.close).toHaveBeenCalledOnce();
 
   await act(async () => {

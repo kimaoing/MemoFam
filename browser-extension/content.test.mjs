@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const contentScript = await readFile(new URL('./content.js', import.meta.url), 'utf8');
 const appBridgeScript = await readFile(new URL('./app-bridge.js', import.meta.url), 'utf8');
+const extensionManifest = JSON.parse(await readFile(new URL('./manifest.json', import.meta.url), 'utf8'));
 
 test('responds to extension checks from supported app pages', async () => {
   const dom = new JSDOM('', { runScripts: 'outside-only', url: 'https://memo-fam.vercel.app/' });
@@ -27,6 +28,14 @@ test('responds to extension checks from supported app pages', async () => {
     installed: true,
   }]);
   dom.window.close();
+});
+
+test('injects the app bridge into the deployed MemoFam worker origin', () => {
+  const appBridgeMatches = extensionManifest.content_scripts
+    .find(({ js }) => js.includes('app-bridge.js'))?.matches || [];
+
+  assert.ok(appBridgeMatches.includes('https://memofam.rlagmldnjs005.workers.dev/*'));
+  assert.equal(extensionManifest.background, undefined);
 });
 
 test('reads the MapleScouter score and multipliers and sends them to the opener', () => {

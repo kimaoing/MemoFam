@@ -9,7 +9,8 @@
         "http://localhost/*",
         "http://127.0.0.1/*",
         "https://*.app.github.dev/*",
-        "https://*.vercel.app/*"
+        "https://*.vercel.app/*",
+        "https://memofam.rlagmldnjs005.workers.dev/*"
       ],
       "js": ["app-bridge.js"],
       "run_at": "document_start"

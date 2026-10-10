@@ -1305,6 +1305,22 @@ function App() {
     }
   }
 
+  async function openChromeExtensionSettings() {
+    const settingsUrl = window.navigator.userAgent.includes('Edg/') ? 'edge://extensions' : 'chrome://extensions';
+    try {
+      await window.navigator.clipboard.writeText(settingsUrl);
+      setNotice({
+        type: 'success',
+        text: `${settingsUrl} 주소를 복사했습니다. 주소창에 붙여넣어 확장 프로그램 페이지를 여세요.`,
+      });
+    } catch {
+      setNotice({
+        type: 'error',
+        text: `브라우저 보안 정책상 웹페이지에서 확장 프로그램 페이지를 직접 열 수 없습니다. 주소창에 ${settingsUrl} 를 입력해 주세요.`,
+      });
+    }
+  }
+
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
   const currentGroupParties = partyDraft?.groupId === selectedGroupId ? partyDraft.parties : groupParties;
   const partyOverviewEntries = currentGroupParties.map((party, index) => {
@@ -1847,14 +1863,13 @@ function App() {
                 <a className="outline-button extension-download" href="/memofam-maplescouter-reader.zip" download>
                   MemoFam Reader 다운로드
                 </a>
-                <a
+                <button
                   className="outline-button extension-open-settings"
-                  href="chrome://extensions/"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  type="button"
+                  onClick={openChromeExtensionSettings}
                 >
                   Chrome 확장 프로그램 열기
-                </a>
+                </button>
               </div>
               <ol>
                 <li>ZIP을 다운로드해 압축을 풉니다.</li>

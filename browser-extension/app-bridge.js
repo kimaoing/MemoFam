@@ -4,7 +4,9 @@
 
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.origin !== location.origin) return;
-    if (event.data?.type !== requestType || typeof event.data.requestId !== 'string') return;
+    if (typeof event.data.requestId !== 'string') return;
+
+    if (event.data.type !== requestType) return;
 
     window.postMessage({
       type: responseType,

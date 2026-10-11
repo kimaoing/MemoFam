@@ -18,9 +18,15 @@
     "kaling": 6,
     "adversary": 3,
     "kalos": 6,
-    "lotus" : 3
+    "lotus" : 2
   },
-  "maxPartySizeByBoss": { "chaos_kalos": 2 },
+  "maxPartySizeByBoss": {
+    "chaos_kalos": 2,
+    "normal_kalos": 1,
+    "easy_bellona": 1,
+    "normal_adversary": 1,
+    "hard_kaling": 2,
+    "extreme_kaling": 1 },
   "unrecordedSoloBossIds": [
     "hard_vonleon",
     "normal_arkarium",

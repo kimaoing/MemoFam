@@ -2296,8 +2296,7 @@ function App() {
                     </form>
                     <div className="sync-footer">
                       <span>API 키는 브라우저 쿠키에 30일간 저장할 수 있습니다. 공용 기기에서는 유지 옵션을 사용하지 마세요.</span>
-                      <a href="https://openapi.nexon.com/ko/game/maplestory/?id=14" target="_blank" rel="noreferrer">API 키 및 캐릭터 API 안내</a>
-                      <a href="https://openapi.nexon.com/ko/game/maplestory/?id=57" target="_blank" rel="noreferrer">스케줄러 API 안내</a>
+                      <a href="https://openapi.nexon.com/ko/my-application" target="_blank" rel="noreferrer">API 키 확인</a>
                     </div>
                   </section>
 
